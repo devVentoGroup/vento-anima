@@ -13,9 +13,9 @@ import Animated, {
   runOnJS,
 } from "react-native-reanimated"
 
-import { AnimaLogo } from "../../components/anima-logo"
-import { COLORS } from "../../constants/colors"
-import { useAuth } from "../../contexts/auth-context"
+import { AnimaLogo } from "@/components/anima-logo"
+import { COLORS } from "@/constants/colors"
+import { useAuth } from "@/contexts/auth-context"
 
 type Star = { id: string; x: number; y: number; size: number; opacity: number }
 

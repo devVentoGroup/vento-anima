@@ -3,7 +3,7 @@ import { StatusBar } from "expo-status-bar"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { SafeAreaProvider } from "react-native-safe-area-context"
 
-import { AuthProvider } from "../contexts/auth-context"
+import { AuthProvider } from "@/contexts/auth-context"
 export const unstable_settings = {
   initialRouteName: "(auth)/splash",
 }

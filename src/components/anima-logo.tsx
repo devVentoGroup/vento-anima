@@ -5,7 +5,7 @@ interface AnimaLogoProps {
   size?: number
 }
 
-const LOGO = require("../assets/icon.png")
+const LOGO = require("../../assets/icon.png")
 
 export function AnimaLogo({ size = 64 }: AnimaLogoProps) {
   return (

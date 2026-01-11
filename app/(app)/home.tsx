@@ -13,9 +13,9 @@ import {
 } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 
-import { COLORS } from "../../constants/colors"
-import { useAuth } from "../../contexts/auth-context"
-import { useAttendance } from "../../hooks/use-attendance"
+import { COLORS } from "@/constants/colors"
+import { useAuth } from "@/contexts/auth-context"
+import { useAttendance } from "@/hooks/use-attendance"
 
 function formatClock(value: string | null) {
   if (!value) return "--:--"

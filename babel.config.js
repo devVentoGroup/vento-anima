@@ -14,18 +14,12 @@ module.exports = function (api) {
     ],
   ];
 
-  // Expo Router (solo si existe en el proyecto)
-  try {
-    require.resolve("expo-router");
-    plugins.push("expo-router/babel");
-  } catch (_) {}
-
   // Reanimated (solo si existe en el proyecto)
   let hasReanimated = false;
   try {
     require.resolve("react-native-reanimated");
     hasReanimated = true;
-  } catch (_) {}
+  } catch (_) { }
 
   // IMPORTANTE: Reanimated plugin debe ir de último
   if (hasReanimated) {
