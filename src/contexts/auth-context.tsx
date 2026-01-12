@@ -5,7 +5,7 @@ import { useRouter, useSegments } from "expo-router"
 import type { Session, User } from "@supabase/supabase-js"
 import { ActivityIndicator, StyleSheet, View } from "react-native"
 
-import { supabase } from "../lib/supabase"
+import { supabase } from "@/lib/supabase"
 
 interface Employee {
   id: string

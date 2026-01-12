@@ -2,14 +2,14 @@ import { useCallback, useMemo, useRef, useState } from "react"
 import * as Haptics from "expo-haptics"
 import { Platform } from "react-native"
 
-import { supabase } from "../lib/supabase"
+import { supabase } from "@/lib/supabase"
 import {
   calculateDistance,
   validateCheckInLocation,
   type SiteCoordinates,
   type ValidatedLocation,
-} from "../lib/geolocation"
-import { useAuth } from "../contexts/auth-context"
+} from "@/lib/geolocation"
+import { useAuth } from "@/contexts/auth-context"
 
 function isLikelyOfflineError(err: unknown): boolean {
   if (!err) return false
