@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -20,6 +20,9 @@ import * as DocumentPicker from "expo-document-picker";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import * as Device from "expo-device";
+import * as FileSystem from "expo-file-system/legacy";
+import * as Sharing from "expo-sharing";
+import * as IntentLauncher from "expo-intent-launcher";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
@@ -36,6 +39,7 @@ type DocumentType = {
   validity_months: number | null;
   reminder_days: number | null;
   is_active: boolean;
+  display_order?: number | null;
 };
 type SiteOption = {
   id: string;
@@ -49,6 +53,7 @@ type DocumentRow = {
   status: DocumentStatus;
   scope: DocumentScope;
   site_id: string | null;
+  target_employee_id: string | null;
   document_type_id: string | null;
   issue_date: string | null;
   expiry_date: string | null;
@@ -69,12 +74,7 @@ type SelectedFile = {
   mime: string;
 };
 
-const FILTERS = [
-  { key: "all", label: "Todos" },
-  { key: "pending_review", label: "Pendientes" },
-  { key: "approved", label: "Aprobados" },
-  { key: "rejected", label: "Rechazados" },
-];
+// Filtros de estado eliminados - solo gerentes suben documentos, no hay necesidad de estados
 const DOCUMENT_NOTIFICATION_KEY = "document_notifications_v1";
 const DEFAULT_REMINDER_DAYS = 7;
 const DOCUMENT_NOTIFICATION_CHANNEL = "document-alerts";
@@ -151,6 +151,32 @@ function diffDays(a: Date, b: Date) {
   return Math.ceil(ms / 86400000)
 }
 
+// Helper para convertir base64 a string binario
+function base64ToBinary(base64: string): string {
+  if (typeof atob !== 'undefined') {
+    return atob(base64);
+  }
+  // Implementación manual para React Native
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = '';
+  let i = 0;
+  while (i < base64.length) {
+    const enc1 = chars.indexOf(base64.charAt(i++));
+    const enc2 = chars.indexOf(base64.charAt(i++));
+    const enc3 = chars.indexOf(base64.charAt(i++));
+    const enc4 = chars.indexOf(base64.charAt(i++));
+    
+    const chr1 = (enc1 << 2) | (enc2 >> 4);
+    const chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
+    const chr3 = ((enc3 & 3) << 6) | enc4;
+    
+    result += String.fromCharCode(chr1);
+    if (enc3 !== 64) result += String.fromCharCode(chr2);
+    if (enc4 !== 64) result += String.fromCharCode(chr3);
+  }
+  return result;
+}
+
 type NotificationMap = Record<string, { id: string; fireAt: number }>
 
 async function loadNotificationMap(): Promise<NotificationMap> {
@@ -193,22 +219,11 @@ async function ensureAndroidChannel() {
   )
 }
 
-function statusLabel(status: DocumentStatus) {
-  if (status === "approved") return "Aprobado";
-  if (status === "rejected") return "Rechazado";
-  return "En revisión";
-}
-
-function statusTone(status: DocumentStatus): string {
-  if (status === "approved") return COLORS.rosegold;
-  if (status === "rejected") return COLORS.neutral;
-  return COLORS.accent;
-}
+// Funciones de estado eliminadas - no se usan más
 
 export default function DocumentsScreen() {
   const insets = useSafeAreaInsets();
   const { user, employee, employeeSites, selectedSiteId } = useAuth();
-  const [filter, setFilter] = useState("all");
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -224,8 +239,10 @@ export default function DocumentsScreen() {
   const [expiryDate, setExpiryDate] = useState<Date | null>(null);
   const [showIssuePicker, setShowIssuePicker] = useState(false);
   const [showExpiryPicker, setShowExpiryPicker] = useState(false);
+  const [tempIssueDate, setTempIssueDate] = useState<Date | null>(null);
+  const [tempExpiryDate, setTempExpiryDate] = useState<Date | null>(null);
   const [isExpiryManual, setIsExpiryManual] = useState(false);
-  const [activePicker, setActivePicker] = useState<"type" | "site" | null>(
+  const [activePicker, setActivePicker] = useState<"type" | "site" | "employee" | null>(
     null,
   );
   const [pickerQuery, setPickerQuery] = useState("");
@@ -235,6 +252,9 @@ export default function DocumentsScreen() {
   const [isScheduling, setIsScheduling] = useState(false);
   const [pushTokenReady, setPushTokenReady] = useState(false);
   const pushRegistrationRef = useRef(false);
+  const [availableEmployees, setAvailableEmployees] = useState<Array<{ id: string; full_name: string }>>([]);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
+  const [filterEmployeeId, setFilterEmployeeId] = useState<string | null>(null);
 
   const canManageScopes = useMemo(() => {
     const role = employee?.role ?? null;
@@ -277,6 +297,11 @@ export default function DocumentsScreen() {
     if (selectedSiteId) return selectedSiteId;
     return sites[0]?.id ?? null;
   }, [siteId, selectedSiteId, sites]);
+
+  const managerSiteId = useMemo(() => {
+    if (isManager && employee?.siteId) return employee.siteId;
+    return null;
+  }, [isManager, employee?.siteId]);
   const availableTypes = useMemo(() => {
     return documentTypes.filter((type) => type.scope === scope)
   }, [documentTypes, scope])
@@ -293,8 +318,22 @@ export default function DocumentsScreen() {
     return sites.filter((site) => site.name.toLowerCase().includes(q))
   }, [sites, pickerQuery])
 
+  const filteredEmployees = useMemo(() => {
+    if (!pickerQuery.trim()) return availableEmployees
+    const q = pickerQuery.trim().toLowerCase()
+    return availableEmployees.filter((emp) => emp.full_name.toLowerCase().includes(q))
+  }, [availableEmployees, pickerQuery])
+
+  const selectedEmployee = useMemo(() => {
+    return availableEmployees.find((emp) => emp.id === selectedEmployeeId) ?? null
+  }, [availableEmployees, selectedEmployeeId])
+
   const selectedType = useMemo(() => {
-    return documentTypes.find((type) => type.id === selectedTypeId) ?? null
+    const type = documentTypes.find((type) => type.id === selectedTypeId) ?? null
+    if (type) {
+      console.log('[DOCUMENTS] Selected type:', type.name, 'requires_expiry:', type.requires_expiry, 'validity_months:', type.validity_months)
+    }
+    return type
   }, [documentTypes, selectedTypeId])
   useEffect(() => {
     setIssueDate(null)
@@ -330,12 +369,19 @@ export default function DocumentsScreen() {
     if (!user) return
     setIsLoading(true)
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from("documents")
         .select(
-          "id, title, description, status, scope, site_id, document_type_id, issue_date, expiry_date, storage_path, file_name, updated_at, document_type:document_types (id, name, scope, requires_expiry, validity_months, reminder_days, is_active)",
+          "id, title, description, status, scope, site_id, document_type_id, issue_date, expiry_date, storage_path, file_name, updated_at, target_employee_id, document_type:document_types (id, name, scope, requires_expiry, validity_months, reminder_days, is_active)",
         )
         .order("updated_at", { ascending: false })
+
+      // Si hay filtro de trabajador, aplicarlo
+      if (filterEmployeeId && canManageScopes) {
+        query = query.eq("target_employee_id", filterEmployeeId)
+      }
+
+      const { data, error } = await query
 
       if (error) throw error
       const normalized = ((data as DocumentRowDb[]) ?? []).map((row) => ({
@@ -351,19 +397,22 @@ export default function DocumentsScreen() {
     } finally {
       setIsLoading(false)
     }
-  }, [user])
+  }, [user, filterEmployeeId, canManageScopes])
 
   const loadDocumentTypes = useCallback(async () => {
     if (!user) return
     try {
       const { data, error } = await supabase
         .from("document_types")
-        .select("id, name, scope, requires_expiry, validity_months, reminder_days, is_active")
+        .select("id, name, scope, requires_expiry, validity_months, reminder_days, is_active, display_order")
         .eq("is_active", true)
+        .order("display_order", { ascending: true })
         .order("name", { ascending: true })
 
       if (error) throw error
-      setDocumentTypes((data as DocumentType[]) ?? [])
+      const types = (data as DocumentType[]) ?? []
+      console.log('[DOCUMENTS] Loaded document types:', types.map(t => ({ name: t.name, requires_expiry: t.requires_expiry, validity_months: t.validity_months })))
+      setDocumentTypes(types)
     } catch (err) {
       console.error("Document types error:", err)
       Alert.alert("Error", "No se pudieron cargar los tipos de documento.")
@@ -386,6 +435,38 @@ export default function DocumentsScreen() {
     }
   }, [user, canViewAllSites])
 
+  const loadAvailableEmployees = useCallback(async () => {
+    if (!user || !canManageScopes) {
+      console.log('[DOCUMENTS] Cannot load employees: user=', !!user, 'canManageScopes=', canManageScopes);
+      return;
+    }
+    try {
+      console.log('[DOCUMENTS] Loading available employees...', { isManager, managerSiteId });
+      let query = supabase
+        .from("employees")
+        .select("id, full_name")
+        .eq("is_active", true)
+        .order("full_name", { ascending: true })
+
+      // Si es gerente, solo cargar empleados de su sede
+      if (isManager && managerSiteId) {
+        query = query.eq("site_id", managerSiteId)
+        console.log('[DOCUMENTS] Filtering employees by site:', managerSiteId);
+      }
+
+      const { data, error } = await query
+      if (error) {
+        console.error('[DOCUMENTS] Error loading employees:', error);
+        throw error;
+      }
+      console.log('[DOCUMENTS] Loaded employees:', data?.length ?? 0);
+      setAvailableEmployees((data ?? []) as Array<{ id: string; full_name: string }>)
+    } catch (err) {
+      console.error("[DOCUMENTS] Employees load error:", err)
+      Alert.alert("Error", "No se pudieron cargar los trabajadores.");
+    }
+  }, [user, canManageScopes, isManager, managerSiteId])
+
   const refreshNotificationPermission = useCallback(async () => {
     const permissions = await Notifications.getPermissionsAsync()
     setNotificationsEnabled(permissions.status === "granted")
@@ -404,16 +485,40 @@ export default function DocumentsScreen() {
   const registerPushToken = useCallback(async () => {
     if (!user || !notificationsEnabled) return
     if (!Device.isDevice) return
-    if (pushRegistrationRef.current) return
+    if (pushRegistrationRef.current) {
+      console.log('[DOCUMENTS] Push token registration already in progress, skipping')
+      return
+    }
     pushRegistrationRef.current = true
 
     try {
-      const tokenResult = await Notifications.getExpoPushTokenAsync({
+      console.log('[DOCUMENTS] Starting push token registration...')
+      
+      // Timeout para evitar que se quede pendiente
+      const tokenPromise = Notifications.getExpoPushTokenAsync({
         projectId: EXPO_PROJECT_ID,
       })
+      
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Push token timeout')), 10000) // 10 segundos timeout
+      })
+      
+      const tokenResult = await Promise.race([tokenPromise, timeoutPromise]) as Awaited<ReturnType<typeof Notifications.getExpoPushTokenAsync>>
       const token = tokenResult.data
-      if (!token) return
+      if (!token) {
+        console.warn('[DOCUMENTS] No push token received')
+        pushRegistrationRef.current = false
+        return
+      }
 
+      console.log('[DOCUMENTS] Push token obtained, saving to database...')
+      
+      // Upsert con timeout manual
+      const upsertTimeout = setTimeout(() => {
+        console.error('[DOCUMENTS] Push token upsert timeout')
+        pushRegistrationRef.current = false
+      }, 8000)
+      
       const { error } = await supabase.from("employee_push_tokens").upsert(
         {
           employee_id: user.id,
@@ -424,14 +529,19 @@ export default function DocumentsScreen() {
         },
         { onConflict: "token" },
       )
+      
+      clearTimeout(upsertTimeout)
 
       if (error) {
-        console.error("Push token save error:", error)
+        console.error("[DOCUMENTS] Push token save error:", error)
+        pushRegistrationRef.current = false // Resetear para permitir reintento
       } else {
+        console.log('[DOCUMENTS] Push token saved successfully')
         setPushTokenReady(true)
       }
     } catch (err) {
-      console.error("Push token registration error:", err)
+      console.error("[DOCUMENTS] Push token registration error:", err)
+      pushRegistrationRef.current = false // Resetear para permitir reintento
     }
   }, [user, notificationsEnabled])
 
@@ -449,7 +559,7 @@ export default function DocumentsScreen() {
 
         for (const doc of docs) {
           if (!doc.expiry_date) continue
-          if (doc.status === "rejected") continue
+          // No hay documentos rechazados - solo gerentes suben documentos
 
           const reminderDays =
             doc.document_type?.reminder_days ?? DEFAULT_REMINDER_DAYS
@@ -528,17 +638,31 @@ export default function DocumentsScreen() {
       void loadDocuments()
       void loadDocumentTypes()
       void loadManagedSites()
-    }, [loadDocuments, loadDocumentTypes, loadManagedSites]),
+      void loadAvailableEmployees()
+    }, [loadDocuments, loadDocumentTypes, loadManagedSites, loadAvailableEmployees]),
   )
 
   useEffect(() => {
     void refreshNotificationPermission()
   }, [refreshNotificationPermission])
 
+  // Ref para evitar múltiples ejecuciones de registerPushToken
+  const pushTokenRegisteredRef = useRef(false)
+  
   useEffect(() => {
-    if (!notificationsEnabled) return
+    if (!notificationsEnabled) {
+      pushTokenRegisteredRef.current = false
+      return
+    }
+    if (pushTokenRegisteredRef.current) return // Ya se registró
+    if (pushTokenReady) {
+      pushTokenRegisteredRef.current = true
+      return // Ya está listo
+    }
+    
+    pushTokenRegisteredRef.current = true
     void registerPushToken()
-  }, [notificationsEnabled, registerPushToken])
+  }, [notificationsEnabled, pushTokenReady]) // Sin dependencia de función
 
   useEffect(() => {
     if (!notificationsEnabled) return
@@ -550,11 +674,6 @@ export default function DocumentsScreen() {
     if (!pushTokenReady) return
     void clearLocalNotifications()
   }, [pushTokenReady])
-
-  const visibleDocuments = useMemo(() => {
-    if (filter === "all") return documents
-    return documents.filter((doc) => doc.status === filter)
-  }, [documents, filter])
 
   const alertDocuments = useMemo(() => {
     const today = parseDateOnly(formatDateOnly(new Date()))
@@ -609,6 +728,9 @@ export default function DocumentsScreen() {
     setShowExpiryPicker(false)
     setActivePicker(null)
     setPickerQuery("")
+    setSelectedEmployeeId(null)
+    setTempIssueDate(null)
+    setTempExpiryDate(null)
   }
 
   const closeUploadModal = () => {
@@ -616,6 +738,12 @@ export default function DocumentsScreen() {
     setActivePicker(null)
     setShowIssuePicker(false)
     setShowExpiryPicker(false)
+    // No resetear el picker si está abierto desde el filtro
+    if (!isUploadOpen && activePicker === "employee") {
+      // Mantener el picker abierto si es para filtrar
+    } else if (isUploadOpen) {
+      setActivePicker(null)
+    }
   }
 
   const openUpload = () => {
@@ -633,9 +761,15 @@ export default function DocumentsScreen() {
       return
     }
 
-    if (scope === "employee" && !selectedTypeId) {
-      Alert.alert("Documento", "Selecciona un tipo de documento.")
-      return
+    if (scope === "employee") {
+      if (!selectedTypeId) {
+        Alert.alert("Documento", "Selecciona un tipo de documento.")
+        return
+      }
+      if (!selectedEmployeeId) {
+        Alert.alert("Documento", "Selecciona un trabajador.")
+        return
+      }
     }
     if (scope === "site" && !customTitle.trim()) {
       Alert.alert("Documento", "Escribe el nombre del documento.")
@@ -674,22 +808,23 @@ export default function DocumentsScreen() {
 
     setIsSaving(true)
     try {
+      console.log('[DOCUMENTS] Starting upload...');
       const now = new Date().toISOString()
       const safeName = selectedFile.name.replace(/\s+/g, "_")
       const storagePath = `${user.id}/${Date.now()}_${safeName}`
 
-      const shouldAutoApprove = canManageScopes && scope !== "employee"
+      console.log('[DOCUMENTS] Storage path:', storagePath);
+
+      // Como solo gerentes pueden subir documentos, todos se aprueban automáticamente
+      const shouldAutoApprove = canManageScopes
 
       const insertPayload = {
         scope,
         owner_employee_id: user.id,
-        target_employee_id: scope === "employee" ? user.id : null,
+        target_employee_id: scope === "employee" ? (selectedEmployeeId ?? user.id) : null,
         site_id: scope === "site" ? activeSiteId : null,
         title: scope === "site" ? customTitle.trim() : activeType?.name ?? "",
         description: description.trim() || null,
-        status: shouldAutoApprove ? "approved" : "pending_review",
-        approved_by: shouldAutoApprove ? user.id : null,
-        approved_at: shouldAutoApprove ? now : null,
         storage_path: storagePath,
         file_name: selectedFile.name,
         file_size_bytes: selectedFile.size,
@@ -699,66 +834,167 @@ export default function DocumentsScreen() {
         expiry_date: expiryDateValue,
       }
 
-      const fileResponse = await fetch(selectedFile.uri)
-      const fileBlob = await fileResponse.blob()
+      console.log('[DOCUMENTS] Insert payload:', JSON.stringify(insertPayload, null, 2));
 
-      const { error: uploadError } = await supabase.storage
+      console.log('[DOCUMENTS] Reading file as base64 from URI:', selectedFile.uri);
+      
+      // Leer el archivo como base64 (más confiable en React Native)
+      const base64Data = await FileSystem.readAsStringAsync(selectedFile.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      
+      console.log('[DOCUMENTS] Base64 data length:', base64Data.length, 'characters');
+      
+      if (!base64Data || base64Data.length === 0) {
+        throw new Error('El archivo está vacío o no se pudo leer');
+      }
+
+      // Convertir base64 a ArrayBuffer
+      const binaryString = base64ToBinary(base64Data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const arrayBuffer = bytes.buffer;
+      
+      console.log('[DOCUMENTS] ArrayBuffer created, size:', arrayBuffer.byteLength, 'bytes');
+
+      console.log('[DOCUMENTS] Uploading ArrayBuffer to storage...');
+      const { data: uploadData, error: uploadError } = await supabase.storage
         .from("documents")
-        .upload(storagePath, fileBlob, {
-          contentType: selectedFile.mime,
+        .upload(storagePath, arrayBuffer, {
+          contentType: 'application/pdf',
+          cacheControl: '3600',
           upsert: false,
         })
+      
+      console.log('[DOCUMENTS] Upload result:', JSON.stringify(uploadData, null, 2));
 
-      if (uploadError) throw uploadError
+      if (uploadError) {
+        console.error('[DOCUMENTS] Upload error:', uploadError);
+        throw uploadError;
+      }
 
+      console.log('[DOCUMENTS] Upload successful, inserting record...');
       const { error: insertError } = await supabase
         .from("documents")
         .insert(insertPayload)
 
       if (insertError) {
+        console.error('[DOCUMENTS] Insert error:', insertError);
+        console.log('[DOCUMENTS] Cleaning up uploaded file...');
         await supabase.storage.from("documents").remove([storagePath])
         throw insertError
       }
 
+      console.log('[DOCUMENTS] Document saved successfully, reloading list...');
       await loadDocuments()
+      console.log('[DOCUMENTS] Closing modal...');
       setIsUploadOpen(false)
+      Alert.alert("Documento", "Documento subido correctamente.");
     } catch (err) {
-      console.error("Upload error:", err)
-      Alert.alert("Documento", "No se pudo subir el documento.")
+      console.error("[DOCUMENTS] Upload error:", err)
+      console.error("[DOCUMENTS] Error details:", JSON.stringify(err, null, 2));
+      Alert.alert("Documento", `No se pudo subir el documento: ${err instanceof Error ? err.message : 'Error desconocido'}`);
     } finally {
+      console.log('[DOCUMENTS] Resetting isSaving to false');
       setIsSaving(false)
     }
   }
 
   const openDocument = async (row: DocumentRow) => {
     try {
-      const { data, error } = await supabase.storage
+      console.log('[DOCUMENTS] Opening document:', row.storage_path);
+      
+      // Obtener URL pública del documento
+      const { data: { publicUrl } } = supabase.storage
         .from("documents")
-        .createSignedUrl(row.storage_path, 60);
+        .getPublicUrl(row.storage_path);
 
-      if (error || !data?.signedUrl) {
-        throw error ?? new Error("No signed url");
-      }
-
-      await Linking.openURL(data.signedUrl);
+      console.log('[DOCUMENTS] Opening URL:', publicUrl);
+      
+      // Abrir en navegador externo (única opción sin custom development build)
+      await Linking.openURL(publicUrl);
     } catch (err) {
-      console.error("Open document error:", err);
-      Alert.alert("Documento", "No se pudo abrir el PDF.");
+      console.error("[DOCUMENTS] Open document error:", err);
+      Alert.alert(
+        "Error", 
+        `No se pudo abrir el PDF: ${err instanceof Error ? err.message : 'Error desconocido'}`
+      );
     }
   };
 
-  const counts = useMemo(() => {
-    const pending = documents.filter(
-      (doc) => doc.status === "pending_review",
-    ).length;
-    const approved = documents.filter(
-      (doc) => doc.status === "approved",
-    ).length;
-    const rejected = documents.filter(
-      (doc) => doc.status === "rejected",
-    ).length;
-    return { pending, approved, rejected };
-  }, [documents]);
+  const handleDeleteDocument = async (doc: DocumentRow) => {
+    Alert.alert(
+      "Eliminar documento",
+      `¿Estás seguro de que quieres eliminar "${doc.document_type?.name ?? doc.title}"? Esta acción no se puede deshacer.`,
+      [
+        {
+          text: "Cancelar",
+          style: "cancel",
+        },
+        {
+          text: "Eliminar",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              console.log('[DOCUMENTS] Deleting document:', doc.id, doc.storage_path);
+              
+              // Eliminar inmediatamente de la UI para feedback rápido
+              setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+              
+              // Primero eliminar el registro de la base de datos (más importante)
+              const { error: deleteError, data: deleteData } = await supabase
+                .from("documents")
+                .delete()
+                .eq("id", doc.id)
+                .select();
+
+              if (deleteError) {
+                console.error("[DOCUMENTS] Error deleting document from DB:", deleteError);
+                // Revertir el cambio en la UI si falla
+                await loadDocuments();
+                throw deleteError;
+              }
+
+              console.log('[DOCUMENTS] Document deleted from DB:', deleteData);
+
+              // Luego intentar eliminar el archivo del storage
+              const { error: storageError } = await supabase.storage
+                .from("documents")
+                .remove([doc.storage_path]);
+
+              if (storageError) {
+                console.warn("[DOCUMENTS] Error deleting file from storage (non-critical):", storageError);
+                // No lanzar error, el documento ya fue eliminado de la BD
+              } else {
+                console.log('[DOCUMENTS] File deleted from storage successfully');
+              }
+
+              // Recargar la lista de documentos para asegurar sincronización
+              console.log('[DOCUMENTS] Reloading documents list...');
+              await loadDocuments();
+              
+              // Verificar que el documento ya no esté en la lista
+              console.log('[DOCUMENTS] Document deletion completed');
+              
+              Alert.alert("Documento", "Documento eliminado correctamente.");
+            } catch (err) {
+              console.error("[DOCUMENTS] Error deleting document:", err);
+              // Recargar para restaurar el estado correcto
+              await loadDocuments();
+              Alert.alert(
+                "Error", 
+                `No se pudo eliminar el documento: ${err instanceof Error ? err.message : 'Error desconocido'}`
+              );
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Métricas de estado eliminadas - no se necesitan
 
   return (
     <View style={styles.root}>
@@ -776,48 +1012,37 @@ export default function DocumentsScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.title}>Documentos</Text>
             <Text style={styles.subtitle}>
-              PDFs personales y de sede.
+              {canManageScopes 
+                ? "PDFs personales y de sede. Solo gerentes pueden subir."
+                : "Consulta tus documentos personales y de sede."}
             </Text>
           </View>
-          <TouchableOpacity
-            onPress={openUpload}
-            style={[
-              UI.chip,
-              {
-                borderColor: COLORS.accent,
-                backgroundColor: "rgba(226, 0, 106, 0.12)",
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 8,
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-              },
-            ]}
-          >
-            <Ionicons
-              name="cloud-upload-outline"
-              size={16}
-              color={COLORS.accent}
-            />
-            <Text style={{ fontWeight: "800", color: COLORS.accent }}>
-              Subir
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
-          <View style={[UI.card, styles.metricCard]}>
-            <Text style={styles.metricLabel}>Pendientes</Text>
-            <Text style={styles.metricValue}>{counts.pending}</Text>
-          </View>
-          <View style={[UI.card, styles.metricCard]}>
-            <Text style={styles.metricLabel}>Aprobados</Text>
-            <Text style={styles.metricValue}>{counts.approved}</Text>
-          </View>
-          <View style={[UI.card, styles.metricCard]}>
-            <Text style={styles.metricLabel}>Rechazados</Text>
-            <Text style={styles.metricValue}>{counts.rejected}</Text>
-          </View>
+          {canManageScopes ? (
+            <TouchableOpacity
+              onPress={openUpload}
+              style={[
+                UI.chip,
+                {
+                  borderColor: COLORS.accent,
+                  backgroundColor: "rgba(226, 0, 106, 0.12)",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 8,
+                  paddingVertical: 10,
+                  paddingHorizontal: 14,
+                },
+              ]}
+            >
+              <Ionicons
+                name="cloud-upload-outline"
+                size={16}
+                color={COLORS.accent}
+              />
+              <Text style={{ fontWeight: "800", color: COLORS.accent }}>
+                Subir
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {!notificationsEnabled ? (
@@ -884,49 +1109,54 @@ export default function DocumentsScreen() {
           </View>
         ) : null}
 
-        <View style={{ marginTop: 16 }}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingRight: 8 }}
-          >
-            {FILTERS.map((item, idx) => {
-              const isActive = filter === item.key;
-              const isLast = idx === FILTERS.length - 1;
-
-              return (
-                <TouchableOpacity
-                  key={item.key}
-                  onPress={() => setFilter(item.key)}
-                  style={[
-                    UI.chip,
-                    {
-                      borderColor: isActive ? COLORS.accent : COLORS.border,
-                      backgroundColor: isActive
-                        ? "rgba(226, 0, 106, 0.10)"
-                        : COLORS.white,
-                      paddingVertical: 10,
-                      paddingHorizontal: 14,
-                      marginRight: isLast ? 0 : 10,
-                      minWidth: item.key === "all" ? 88 : 122,
-                    },
-                  ]}
-                >
-                  <Text
-                    numberOfLines={1}
-                    style={{
-                      textAlign: "center",
-                      fontWeight: "800",
-                      color: isActive ? COLORS.accent : COLORS.text,
+        {canManageScopes ? (
+          <View style={{ marginTop: 12 }}>
+            <Text style={styles.modalLabel}>Filtrar por trabajador</Text>
+            <TouchableOpacity
+              onPress={async () => {
+                console.log('[DOCUMENTS] Filter button pressed, availableEmployees:', availableEmployees.length);
+                if (availableEmployees.length === 0) {
+                  console.log('[DOCUMENTS] No employees loaded, loading...');
+                  await loadAvailableEmployees();
+                }
+                console.log('[DOCUMENTS] Setting activePicker to employee, availableEmployees:', availableEmployees.length);
+                setPickerQuery("")
+                setActivePicker("employee")
+              }}
+              style={[
+                UI.chip,
+                {
+                  borderColor: filterEmployeeId ? COLORS.accent : COLORS.border,
+                  backgroundColor: filterEmployeeId 
+                    ? "rgba(226, 0, 106, 0.10)" 
+                    : COLORS.porcelainAlt,
+                  marginTop: 6,
+                },
+              ]}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Text style={{ fontWeight: "700", color: COLORS.text, flex: 1 }}>
+                  {filterEmployeeId 
+                    ? availableEmployees.find(e => e.id === filterEmployeeId)?.full_name ?? "Todos"
+                    : "Todos los trabajadores"}
+                </Text>
+                {filterEmployeeId ? (
+                  <TouchableOpacity
+                    onPress={(e) => {
+                      e.stopPropagation()
+                      setFilterEmployeeId(null)
                     }}
+                    style={{ padding: 4 }}
                   >
-                    {item.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
+                    <Ionicons name="close-circle" size={18} color={COLORS.accent} />
+                  </TouchableOpacity>
+                ) : (
+                  <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
+                )}
+              </View>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         {isLoading ? (
           <View style={{ paddingTop: 30, alignItems: "center" }}>
@@ -934,7 +1164,7 @@ export default function DocumentsScreen() {
           </View>
         ) : null}
 
-        {visibleDocuments.length === 0 && !isLoading ? (
+        {documents.length === 0 && !isLoading ? (
           <View style={{ marginTop: 18 }}>
             <View style={[UI.card, { padding: 18, alignItems: "center" }]}>
               <View
@@ -976,38 +1206,39 @@ export default function DocumentsScreen() {
                 Aún no hay documentos cargados.
               </Text>
 
-              <TouchableOpacity
-                onPress={openUpload}
-                style={[
-                  UI.chip,
-                  {
-                    marginTop: 12,
-                    borderColor: COLORS.accent,
-                    backgroundColor: "rgba(226, 0, 106, 0.12)",
-                    paddingVertical: 10,
-                    paddingHorizontal: 14,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 8,
-                  },
-                ]}
-              >
-                <Ionicons
-                  name="cloud-upload-outline"
-                  size={16}
-                  color={COLORS.accent}
-                />
-                <Text style={{ fontWeight: "800", color: COLORS.accent }}>
-                  Subir documento
-                </Text>
-              </TouchableOpacity>
+              {canManageScopes ? (
+                <TouchableOpacity
+                  onPress={openUpload}
+                  style={[
+                    UI.chip,
+                    {
+                      marginTop: 12,
+                      borderColor: COLORS.accent,
+                      backgroundColor: "rgba(226, 0, 106, 0.12)",
+                      paddingVertical: 10,
+                      paddingHorizontal: 14,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="cloud-upload-outline"
+                    size={16}
+                    color={COLORS.accent}
+                  />
+                  <Text style={{ fontWeight: "800", color: COLORS.accent }}>
+                    Subir documento
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
         ) : null}
 
         <View style={{ marginTop: 18, gap: 12 }}>
-          {visibleDocuments.map((doc) => {
-            const tone = statusTone(doc.status);
+          {documents.map((doc) => {
             const today = parseDateOnly(formatDateOnly(new Date()))
             const expiry = doc.expiry_date ? parseDateOnly(doc.expiry_date) : null
             const daysLeft = expiry ? diffDays(expiry, today) : null
@@ -1066,51 +1297,6 @@ export default function DocumentsScreen() {
                       </Text>
                     </View>
                   </View>
-
-                  {(() => {
-                    const statusIcon =
-                      doc.status === "approved"
-                        ? ("checkmark-circle" as const)
-                        : doc.status === "rejected"
-                          ? ("close-circle" as const)
-                          : ("time" as const);
-
-                    const pillBg =
-                      doc.status === "approved"
-                        ? "rgba(242, 198, 192, 0.28)"
-                        : doc.status === "rejected"
-                          ? COLORS.porcelainAlt
-                          : "rgba(226, 0, 106, 0.10)";
-
-                    const pillBorder =
-                      doc.status === "rejected" ? COLORS.border : tone;
-
-                    return (
-                      <View
-                        style={[
-                          UI.pill,
-                          {
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 6,
-                            borderColor: pillBorder,
-                            backgroundColor: pillBg,
-                          },
-                        ]}
-                      >
-                        <Ionicons name={statusIcon} size={14} color={tone} />
-                        <Text
-                          style={{
-                            fontSize: 11,
-                            fontWeight: "800",
-                            color: tone,
-                          }}
-                        >
-                          {statusLabel(doc.status)}
-                        </Text>
-                      </View>
-                    );
-                  })()}
                 </View>
 
                 <View style={{ flexDirection: "row", marginTop: 10 }}>
@@ -1163,6 +1349,31 @@ export default function DocumentsScreen() {
                       Abrir PDF
                     </Text>
                   </TouchableOpacity>
+                  
+                  {canManageScopes ? (
+                    <TouchableOpacity
+                      onPress={() => handleDeleteDocument(doc)}
+                      style={[
+                        UI.chip,
+                        {
+                          borderColor: COLORS.neutral,
+                          backgroundColor: COLORS.porcelainAlt,
+                          flexDirection: "row",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 8,
+                          paddingVertical: 10,
+                          paddingHorizontal: 16,
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name="trash-outline"
+                        size={16}
+                        color={COLORS.neutral}
+                      />
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               </View>
             );
@@ -1182,35 +1393,16 @@ export default function DocumentsScreen() {
             style={StyleSheet.absoluteFillObject}
             onPress={closeUploadModal}
           />
-          <View style={styles.modalCard}>
+          <ScrollView
+            contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 20 }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Subir documento</Text>
             <Text style={styles.modalSubtitle}>
               Solo PDF. Selecciona el tipo y agrega fechas si aplica.
             </Text>
-
-            <TouchableOpacity
-              onPress={pickDocument}
-              style={[
-                UI.chip,
-                {
-                  borderColor: COLORS.border,
-                  backgroundColor: COLORS.porcelainAlt,
-                  marginTop: 12,
-                },
-              ]}
-            >
-              <Text style={{ fontWeight: "700", color: COLORS.text }}>
-                {selectedFile ? selectedFile.name : "Seleccionar PDF"}
-              </Text>
-            </TouchableOpacity>
-
-            <TextInput
-              value={description}
-              onChangeText={setDescription}
-              placeholder="Descripción (opcional)"
-              placeholderTextColor={COLORS.neutral}
-              style={styles.input}
-            />
 
             <Text style={styles.modalLabel}>Alcance</Text>
             <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
@@ -1268,6 +1460,32 @@ export default function DocumentsScreen() {
 
             {scope === "employee" ? (
               <>
+                <Text style={styles.modalLabel}>Trabajador</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (availableEmployees.length === 0) {
+                      void loadAvailableEmployees()
+                    }
+                    setPickerQuery("")
+                    setActivePicker("employee")
+                  }}
+                  style={[
+                    UI.chip,
+                    {
+                      borderColor: COLORS.border,
+                      backgroundColor: COLORS.porcelainAlt,
+                      marginTop: 6,
+                    },
+                  ]}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <Text style={{ fontWeight: "700", color: COLORS.text, flex: 1 }}>
+                      {selectedEmployee ? selectedEmployee.full_name : "Selecciona un trabajador"}
+                    </Text>
+                    <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
+                  </View>
+                </TouchableOpacity>
+
                 <Text style={styles.modalLabel}>Tipo de documento</Text>
                 <TouchableOpacity
                   onPress={() => {
@@ -1295,6 +1513,32 @@ export default function DocumentsScreen() {
                 </TouchableOpacity>
               </>
             ) : null}
+
+            <Text style={styles.modalLabel}>Documento PDF</Text>
+            <TouchableOpacity
+              onPress={pickDocument}
+              style={[
+                UI.chip,
+                {
+                  borderColor: COLORS.border,
+                  backgroundColor: COLORS.porcelainAlt,
+                  marginTop: 6,
+                },
+              ]}
+            >
+              <Text style={{ fontWeight: "700", color: COLORS.text }}>
+                {selectedFile ? selectedFile.name : "Seleccionar PDF"}
+              </Text>
+            </TouchableOpacity>
+
+            <Text style={styles.modalLabel}>Descripción</Text>
+            <TextInput
+              value={description}
+              onChangeText={setDescription}
+              placeholder="Descripción (opcional)"
+              placeholderTextColor={COLORS.neutral}
+              style={styles.input}
+            />
 
             {scope === "site" ? (
               <>
@@ -1339,7 +1583,10 @@ export default function DocumentsScreen() {
               <>
                 <Text style={styles.modalLabel}>Fecha de expedición</Text>
                 <TouchableOpacity
-                  onPress={() => setShowIssuePicker(true)}
+                  onPress={() => {
+                    setTempIssueDate(issueDate ?? new Date());
+                    setShowIssuePicker(true);
+                  }}
                   style={[
                     UI.chip,
                     {
@@ -1356,18 +1603,80 @@ export default function DocumentsScreen() {
                   </Text>
                 </TouchableOpacity>
 
-                {showIssuePicker ? (
+                {showIssuePicker && Platform.OS === "ios" ? (
+                  <Modal
+                    transparent
+                    visible={showIssuePicker}
+                    animationType="slide"
+                    onRequestClose={() => {
+                      setShowIssuePicker(false);
+                      setTempIssueDate(null);
+                    }}
+                  >
+                    <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}>
+                      <View style={{ backgroundColor: "white", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
+                        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                          <Text style={{ fontSize: 18, fontWeight: "800", color: COLORS.text }}>Fecha de expedición</Text>
+                          <TouchableOpacity
+                            onPress={() => {
+                              setShowIssuePicker(false);
+                              setTempIssueDate(null);
+                            }}
+                            style={{ padding: 8 }}
+                          >
+                            <Ionicons name="close" size={24} color={COLORS.text} />
+                          </TouchableOpacity>
+                        </View>
+                        <DateTimePicker
+                          value={tempIssueDate ?? new Date()}
+                          mode="date"
+                          display="spinner"
+                          onChange={(event, date) => {
+                            if (date) {
+                              setTempIssueDate(date);
+                            }
+                          }}
+                          maximumDate={new Date()}
+                          style={{ height: 200 }}
+                        />
+                        <TouchableOpacity
+                          onPress={() => {
+                            if (tempIssueDate) {
+                              setIssueDate(tempIssueDate);
+                              setIsExpiryManual(false);
+                            }
+                            setShowIssuePicker(false);
+                            setTempIssueDate(null);
+                          }}
+                          style={[
+                            UI.chip,
+                            {
+                              marginTop: 16,
+                              borderColor: COLORS.accent,
+                              backgroundColor: "rgba(226, 0, 106, 0.10)",
+                              paddingVertical: 12,
+                              alignItems: "center",
+                            },
+                          ]}
+                        >
+                          <Text style={{ fontWeight: "800", color: COLORS.accent }}>Confirmar</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </Modal>
+                ) : showIssuePicker && Platform.OS === "android" ? (
                   <DateTimePicker
                     value={issueDate ?? new Date()}
                     mode="date"
-                    display={Platform.OS === "ios" ? "inline" : "default"}
-                    onChange={(_, date) => {
-                      if (Platform.OS !== "ios") setShowIssuePicker(false);
+                    display="default"
+                    onChange={(event, date) => {
+                      setShowIssuePicker(false);
                       if (date) {
                         setIssueDate(date);
                         setIsExpiryManual(false);
                       }
                     }}
+                    maximumDate={new Date()}
                   />
                 ) : null}
 
@@ -1375,6 +1684,10 @@ export default function DocumentsScreen() {
                 <TouchableOpacity
                   onPress={() => {
                     setIsExpiryManual(true);
+                    const defaultExpiry = issueDate 
+                      ? addMonthsSafe(issueDate, selectedType?.validity_months ?? 3)
+                      : new Date();
+                    setTempExpiryDate(expiryDate ?? defaultExpiry);
                     setShowExpiryPicker(true);
                   }}
                   style={[
@@ -1393,18 +1706,80 @@ export default function DocumentsScreen() {
                   </Text>
                 </TouchableOpacity>
 
-                {showExpiryPicker ? (
+                {showExpiryPicker && Platform.OS === "ios" ? (
+                  <Modal
+                    transparent
+                    visible={showExpiryPicker}
+                    animationType="slide"
+                    onRequestClose={() => {
+                      setShowExpiryPicker(false);
+                      setTempExpiryDate(null);
+                    }}
+                  >
+                    <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}>
+                      <View style={{ backgroundColor: "white", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
+                        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                          <Text style={{ fontSize: 18, fontWeight: "800", color: COLORS.text }}>Fecha de vencimiento</Text>
+                          <TouchableOpacity
+                            onPress={() => {
+                              setShowExpiryPicker(false);
+                              setTempExpiryDate(null);
+                            }}
+                            style={{ padding: 8 }}
+                          >
+                            <Ionicons name="close" size={24} color={COLORS.text} />
+                          </TouchableOpacity>
+                        </View>
+                        <DateTimePicker
+                          value={tempExpiryDate ?? (issueDate ? addMonthsSafe(issueDate, selectedType?.validity_months ?? 3) : new Date())}
+                          mode="date"
+                          display="spinner"
+                          onChange={(event, date) => {
+                            if (date) {
+                              setTempExpiryDate(date);
+                            }
+                          }}
+                          minimumDate={issueDate ?? undefined}
+                          style={{ height: 200 }}
+                        />
+                        <TouchableOpacity
+                          onPress={() => {
+                            if (tempExpiryDate) {
+                              setExpiryDate(tempExpiryDate);
+                              setIsExpiryManual(true);
+                            }
+                            setShowExpiryPicker(false);
+                            setTempExpiryDate(null);
+                          }}
+                          style={[
+                            UI.chip,
+                            {
+                              marginTop: 16,
+                              borderColor: COLORS.accent,
+                              backgroundColor: "rgba(226, 0, 106, 0.10)",
+                              paddingVertical: 12,
+                              alignItems: "center",
+                            },
+                          ]}
+                        >
+                          <Text style={{ fontWeight: "800", color: COLORS.accent }}>Confirmar</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </Modal>
+                ) : showExpiryPicker && Platform.OS === "android" ? (
                   <DateTimePicker
-                    value={expiryDate ?? new Date()}
+                    value={expiryDate ?? (issueDate ? addMonthsSafe(issueDate, selectedType?.validity_months ?? 3) : new Date())}
                     mode="date"
-                    display={Platform.OS === "ios" ? "inline" : "default"}
-                    onChange={(_, date) => {
-                      if (Platform.OS !== "ios") setShowExpiryPicker(false);
+                    display="default"
+                    onChange={(event, date) => {
+                      setShowExpiryPicker(false);
                       if (date) {
                         setExpiryDate(date);
                         setIsExpiryManual(true);
                       }
                     }}
+                    minimumDate={issueDate ?? undefined}
                   />
                 ) : null}
 
@@ -1455,9 +1830,10 @@ export default function DocumentsScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
-          </View>
+            </View>
+          </ScrollView>
 
-          {activePicker ? (
+          {activePicker && isUploadOpen ? (
             <View
               style={[
                 styles.pickerOverlay,
@@ -1475,7 +1851,11 @@ export default function DocumentsScreen() {
                   <Ionicons name="arrow-back" size={18} color={COLORS.text} />
                 </TouchableOpacity>
                 <Text style={styles.pickerTitle}>
-                  {activePicker === "type" ? "Tipo de documento" : "Sede"}
+                  {activePicker === "type" 
+                    ? "Tipo de documento" 
+                    : activePicker === "employee"
+                    ? "Trabajador"
+                    : "Sede"}
                 </Text>
               </View>
 
@@ -1486,6 +1866,8 @@ export default function DocumentsScreen() {
                   placeholder={
                     activePicker === "type"
                       ? "Buscar tipo..."
+                      : activePicker === "employee"
+                      ? "Buscar trabajador..."
                       : "Buscar sede..."
                   }
                   placeholderTextColor={COLORS.neutral}
@@ -1524,6 +1906,77 @@ export default function DocumentsScreen() {
                       )
                     })
                   )
+                ) : activePicker === "employee" ? (
+                  availableEmployees.length === 0 ? (
+                    <View style={{ padding: 20, alignItems: "center" }}>
+                      <ActivityIndicator size="small" color={COLORS.accent} />
+                      <Text style={[styles.modalHint, { marginTop: 12 }]}>
+                        Cargando trabajadores...
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          void loadAvailableEmployees();
+                        }}
+                        style={[
+                          UI.chip,
+                          {
+                            marginTop: 16,
+                            borderColor: COLORS.accent,
+                            backgroundColor: "rgba(226, 0, 106, 0.10)",
+                          },
+                        ]}
+                      >
+                        <Text style={{ fontWeight: "700", color: COLORS.accent }}>
+                          Reintentar
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : filteredEmployees.length === 0 ? (
+                    <Text style={styles.modalHint}>
+                      No se encontraron trabajadores con ese nombre.
+                    </Text>
+                  ) : (
+                    <>
+                      {!isUploadOpen ? (
+                        <TouchableOpacity
+                          onPress={() => {
+                            setFilterEmployeeId(null)
+                            setActivePicker(null)
+                          }}
+                          style={[
+                            styles.pickerItem,
+                            !filterEmployeeId ? styles.pickerItemActive : null,
+                          ]}
+                        >
+                          <Text style={styles.pickerItemTitle}>Todos los trabajadores</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      {filteredEmployees.map((emp) => {
+                        const active = isUploadOpen 
+                          ? selectedEmployeeId === emp.id
+                          : filterEmployeeId === emp.id
+                        return (
+                          <TouchableOpacity
+                            key={emp.id}
+                            onPress={() => {
+                              if (isUploadOpen) {
+                                setSelectedEmployeeId(emp.id)
+                              } else {
+                                setFilterEmployeeId(emp.id)
+                              }
+                              setActivePicker(null)
+                            }}
+                            style={[
+                              styles.pickerItem,
+                              active ? styles.pickerItemActive : null,
+                            ]}
+                          >
+                            <Text style={styles.pickerItemTitle}>{emp.full_name}</Text>
+                          </TouchableOpacity>
+                        )
+                      })}
+                    </>
+                  )
                 ) : filteredSites.length === 0 ? (
                   <Text style={styles.modalHint}>
                     No hay sedes disponibles para seleccionar.
@@ -1551,6 +2004,124 @@ export default function DocumentsScreen() {
               </ScrollView>
             </View>
           ) : null}
+        </View>
+      </Modal>
+
+      {/* Modal separado para el picker cuando se usa fuera del modal de upload */}
+      <Modal
+        transparent
+        visible={activePicker !== null && !isUploadOpen}
+        animationType="slide"
+        presentationStyle="overFullScreen"
+        onRequestClose={() => setActivePicker(null)}
+      >
+        <View
+          style={[
+            styles.pickerOverlay,
+            {
+              paddingTop: Math.max(16, insets.top + 8),
+              paddingBottom: Math.max(16, insets.bottom + 12),
+            },
+          ]}
+        >
+          <View style={styles.pickerHeader}>
+            <TouchableOpacity
+              onPress={() => setActivePicker(null)}
+              style={styles.pickerBack}
+            >
+              <Ionicons name="arrow-back" size={18} color={COLORS.text} />
+            </TouchableOpacity>
+            <Text style={styles.pickerTitle}>
+              {activePicker === "type" 
+                ? "Tipo de documento" 
+                : activePicker === "employee"
+                ? "Trabajador"
+                : "Sede"}
+            </Text>
+          </View>
+
+          <View style={styles.pickerSearchWrap}>
+            <TextInput
+              value={pickerQuery}
+              onChangeText={setPickerQuery}
+              placeholder={
+                activePicker === "type"
+                  ? "Buscar tipo..."
+                  : activePicker === "employee"
+                  ? "Buscar trabajador..."
+                  : "Buscar sede..."
+              }
+              placeholderTextColor={COLORS.neutral}
+              style={styles.pickerSearchInput}
+            />
+          </View>
+
+          <ScrollView contentContainerStyle={styles.pickerList}>
+            {activePicker === "employee" ? (
+              availableEmployees.length === 0 ? (
+                <View style={{ padding: 20, alignItems: "center" }}>
+                  <ActivityIndicator size="small" color={COLORS.accent} />
+                  <Text style={[styles.modalHint, { marginTop: 12 }]}>
+                    Cargando trabajadores...
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      void loadAvailableEmployees();
+                    }}
+                    style={[
+                      UI.chip,
+                      {
+                        marginTop: 16,
+                        borderColor: COLORS.accent,
+                        backgroundColor: "rgba(226, 0, 106, 0.10)",
+                      },
+                    ]}
+                  >
+                    <Text style={{ fontWeight: "700", color: COLORS.accent }}>
+                      Reintentar
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : filteredEmployees.length === 0 ? (
+                <Text style={styles.modalHint}>
+                  No se encontraron trabajadores con ese nombre.
+                </Text>
+              ) : (
+                <>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setFilterEmployeeId(null)
+                      setActivePicker(null)
+                    }}
+                    style={[
+                      styles.pickerItem,
+                      !filterEmployeeId ? styles.pickerItemActive : null,
+                    ]}
+                  >
+                    <Text style={styles.pickerItemTitle}>Todos los trabajadores</Text>
+                  </TouchableOpacity>
+                  {filteredEmployees.map((emp) => {
+                    const active = filterEmployeeId === emp.id
+                    return (
+                      <TouchableOpacity
+                        key={emp.id}
+                        onPress={() => {
+                          setFilterEmployeeId(emp.id)
+                          setActivePicker(null)
+                        }}
+                        style={[
+                          styles.pickerItem,
+                          active ? styles.pickerItemActive : null,
+                        ]}
+                      >
+                        <Text style={styles.pickerItemTitle}>{emp.full_name}</Text>
+                      </TouchableOpacity>
+                    )
+                  })}
+                </>
+              )
+            ) : null}
+          </ScrollView>
         </View>
       </Modal>
 

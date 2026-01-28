@@ -70,10 +70,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [segments])
 
   const loadEmployee = async (userId: string) => {
-    const { data, error } = await supabase
-      .from("employees")
-      .select(
-        `
+    try {
+      const { data, error } = await supabase
+        .from("employees")
+        .select(
+          `
         id,
         full_name,
         alias,
@@ -82,33 +83,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         is_active,
         sites:sites!employees_site_id_fkey (name)
       `
-      )
-      .eq("id", userId)
-      .single()
+        )
+        .eq("id", userId)
+        .single()
 
-    if (error || !data) {
-      console.error("Error loading employee:", error)
+      if (error) {
+        console.error("[AUTH] Error loading employee:", error)
+        console.error("[AUTH] Error details:", JSON.stringify(error, null, 2))
+        setEmployee(null)
+        return
+      }
+
+      if (!data) {
+        console.error("[AUTH] No employee data returned for user:", userId)
+        setEmployee(null)
+        return
+      }
+
+      console.log("[AUTH] Employee loaded successfully:", data.id, data.full_name)
+      setEmployee({
+        id: data.id,
+        fullName: data.full_name,
+        alias: data.alias,
+        role: data.role,
+        siteId: data.site_id,
+        siteName: (data.sites as any)?.name || null,
+        avatarUrl: null,
+        isActive: data.is_active,
+      })
+    } catch (err) {
+      console.error("[AUTH] Exception loading employee:", err)
       setEmployee(null)
-      return
     }
-
-    setEmployee({
-      id: data.id,
-      fullName: data.full_name,
-      alias: data.alias,
-      role: data.role,
-      siteId: data.site_id,
-      siteName: (data.sites as any)?.name || null,
-      avatarUrl: null,
-      isActive: data.is_active,
-    })
   }
 
   const loadEmployeeSites = async (userId: string) => {
-    const { data, error } = await supabase
-      .from("employee_sites")
-      .select(
-        `
+    try {
+      const { data, error } = await supabase
+        .from("employee_sites")
+        .select(
+          `
         site_id,
         is_primary,
         is_active,
@@ -122,33 +136,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           site_type
         )
       `
-      )
-      .eq("employee_id", userId)
-      .eq("is_active", true)
+        )
+        .eq("employee_id", userId)
+        .eq("is_active", true)
 
-    if (error || !data) {
+      if (error) {
+        console.error("[AUTH] Error loading employee sites:", error)
+        console.error("[AUTH] Error details:", JSON.stringify(error, null, 2))
+        setEmployeeSites([])
+        return
+      }
+
+      if (!data) {
+        console.warn("[AUTH] No employee sites data returned for user:", userId)
+        setEmployeeSites([])
+        return
+      }
+
+      const nextSites = data
+        .map((row) => {
+          const site = row.sites as any
+          if (!site) return null
+          return {
+            siteId: row.site_id,
+            siteName: site.name,
+            latitude: site.latitude ?? null,
+            longitude: site.longitude ?? null,
+            radiusMeters: site.checkin_radius_meters ?? null,
+            type: site.type ?? null,
+            siteType: site.site_type ?? null,
+            isPrimary: row.is_primary ?? false,
+          } as EmployeeSite
+        })
+        .filter(Boolean) as EmployeeSite[]
+
+      console.log("[AUTH] Employee sites loaded:", nextSites.length, "sites")
+      setEmployeeSites(nextSites)
+    } catch (err) {
+      console.error("[AUTH] Exception loading employee sites:", err)
       setEmployeeSites([])
-      return
     }
-
-    const nextSites = data
-      .map((row) => {
-        const site = row.sites as any
-        if (!site) return null
-        return {
-          siteId: row.site_id,
-          siteName: site.name,
-          latitude: site.latitude ?? null,
-          longitude: site.longitude ?? null,
-          radiusMeters: site.checkin_radius_meters ?? null,
-          type: site.type ?? null,
-          siteType: site.site_type ?? null,
-          isPrimary: row.is_primary ?? false,
-        } as EmployeeSite
-      })
-      .filter(Boolean) as EmployeeSite[]
-
-    setEmployeeSites(nextSites)
   }
 
   const loadEmployeeSettings = async (userId: string) => {
@@ -190,11 +217,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(session?.user ?? null)
 
       if (session?.user) {
+        console.log("[AUTH] Loading employee data for user:", session.user.id)
         await Promise.all([
           loadEmployee(session.user.id),
           loadEmployeeSites(session.user.id),
           loadEmployeeSettings(session.user.id),
         ])
+        console.log("[AUTH] Employee data loading completed")
       } else {
         setEmployee(null)
         setEmployeeSites([])
@@ -213,11 +242,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(nextSession?.user ?? null)
 
         if (nextSession?.user) {
+          console.log("[AUTH] Auth state changed, loading employee data for user:", nextSession.user.id)
           await Promise.all([
             loadEmployee(nextSession.user.id),
             loadEmployeeSites(nextSession.user.id),
             loadEmployeeSettings(nextSession.user.id),
           ])
+          console.log("[AUTH] Employee data loading completed after auth state change")
         } else {
           setEmployee(null)
           setEmployeeSites([])

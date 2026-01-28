@@ -432,35 +432,40 @@ export function useAttendance() {
         }
       }
 
-      if (mode === "check_in" && !siteId) {
-        if (employeeSites.length === 0) {
-          const next: GeofenceCheckState = {
-            status: "blocked",
-            canProceed: false,
-            mode,
-            siteId: null,
-            siteName: null,
-            distanceMeters: null,
-            accuracyMeters: null,
-            effectiveRadiusMeters: null,
-            message: "No tienes sedes asignadas",
-            updatedAt: now,
-            location: null,
-            deviceInfo: null,
-            requiresSelection: false,
-            candidateSites: null,
-          }
-          geofenceCacheRef.current = next
-          setGeofenceState(next)
-          return next
+      // Verificar temprano si no hay sedes asignadas o si employeeSites aún no está cargado
+      // Si employeeSites es null/undefined o está vacío, establecer estado de error inmediatamente
+      if (!employeeSites || employeeSites.length === 0) {
+        const next: GeofenceCheckState = {
+          status: "blocked",
+          canProceed: false,
+          mode,
+          siteId: null,
+          siteName: null,
+          distanceMeters: null,
+          accuracyMeters: null,
+          effectiveRadiusMeters: null,
+          message: employeeSites === null || employeeSites === undefined 
+            ? "Cargando información de sedes..." 
+            : "No tienes sedes asignadas",
+          updatedAt: now,
+          location: null,
+          deviceInfo: null,
+          requiresSelection: false,
+          candidateSites: null,
         }
+        geofenceCacheRef.current = next
+        setGeofenceState(next)
+        return next
+      }
 
+      if (mode === "check_in" && !siteId) {
         if (assignedGeoSites.length > 0) {
           if (!location) {
+            // Timeout más corto para evitar que se quede bloqueado
             const locationResult = await getValidatedLocation({
               maxAccuracyMeters: policy.maxAccuracyMeters,
-              samples: 4,
-              timeoutMs: 20000,
+              samples: 3, // Reducir muestras para más rapidez
+              timeoutMs: 10000, // Reducir timeout a 10 segundos
             })
 
             if (!locationResult.success || !locationResult.location) {
@@ -654,11 +659,11 @@ export function useAttendance() {
 
       // Si hay múltiples sedes con GPS y ya tenemos un siteId, verificar si hay una más cercana
       if (mode === "check_in" && siteId && assignedGeoSites.length > 1 && !location) {
-        // Obtener ubicación para calcular la más cercana
+        // Obtener ubicación para calcular la más cercana (timeout corto)
         const locationResult = await getValidatedLocation({
           maxAccuracyMeters: policy.maxAccuracyMeters,
-          samples: 3,
-          timeoutMs: 15000,
+          samples: 2, // Reducir muestras
+          timeoutMs: 8000, // Timeout más corto
         })
         
         if (locationResult.success && locationResult.location) {
@@ -753,7 +758,8 @@ export function useAttendance() {
         candidateSites: null,
       }))
 
-      const resolved = await resolveSite(siteId)
+      try {
+        const resolved = await resolveSite(siteId)
       if (!resolved.site) {
         const next: GeofenceCheckState = {
           status: "error",
@@ -998,6 +1004,30 @@ export function useAttendance() {
       geofenceCacheRef.current = next
       setGeofenceState(next)
       return next
+
+      } catch (error) {
+        // Catch-all para evitar que se quede en "checking" para siempre
+        console.error('[refreshGeofence] Error no manejado:', error)
+        const errorState: GeofenceCheckState = {
+          status: "error",
+          canProceed: false,
+          mode,
+          siteId: siteId ?? null,
+          siteName: null,
+          distanceMeters: null,
+          accuracyMeters: null,
+          effectiveRadiusMeters: null,
+          message: "Error al verificar ubicación. Intenta de nuevo.",
+          updatedAt: Date.now(),
+          location: null,
+          deviceInfo: null,
+          requiresSelection: false,
+          candidateSites: null,
+        }
+        geofenceCacheRef.current = errorState
+        setGeofenceState(errorState)
+        return errorState
+      }
     },
     [user, employee, employeeSites, selectedSiteId, getLastAttendanceLog, resolveSite]
   )
@@ -1016,10 +1046,36 @@ export function useAttendance() {
     setIsLoading(true)
 
     try {
-      const geo = await refreshGeofence({ force: true, mode: "check_in" })
+      // Asegurar que el geofence esté listo antes de proceder
+      // En producción, el geofence puede tardar más en verificarse
+      let geo = await refreshGeofence({ force: true, mode: "check_in" })
+      
+      // Si el geofence está "checking" o no está listo, esperar hasta que esté listo (máximo 8 segundos)
+      const maxWait = 8000
+      const startTime = Date.now()
+      let attempts = 0
+      const maxAttempts = 4
+      
+      while ((geo.status === "checking" || !geo.canProceed) && 
+             (Date.now() - startTime) < maxWait && 
+             attempts < maxAttempts &&
+             geo.status !== "blocked" && 
+             geo.status !== "error") {
+        console.log(`[CHECKIN] Geofence not ready (${geo.status}), waiting... (attempt ${attempts + 1}/${maxAttempts})`)
+        await new Promise(resolve => setTimeout(resolve, 1500)) // Esperar 1.5 segundos entre intentos
+        geo = await refreshGeofence({ force: true, mode: "check_in" })
+        attempts++
+        
+        // Si ya está listo, salir del loop
+        if (geo.canProceed && geo.status === "ready") break
+      }
+      
       if (!geo.canProceed) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-        return { success: false, error: geo.message || "Ubicacion no verificada" }
+        const errorMsg = geo.status === "checking" 
+          ? "La verificación de ubicación está tardando demasiado. Intenta de nuevo."
+          : (geo.message || "Ubicacion no verificada")
+        return { success: false, error: errorMsg }
       }
 
       if (!geo.siteId) {

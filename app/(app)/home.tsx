@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -64,7 +64,7 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const router = useRouter();
-  const { user, session, employee, signOut, employeeSites, selectedSiteId } =
+  const { user, session, employee, signOut, employeeSites, selectedSiteId, isLoading: authIsLoading } =
     useAuth();
   const {
     attendanceState,
@@ -117,35 +117,132 @@ export default function HomeScreen() {
   const ctaTextColor = canRegister ? PALETTE.porcelain : PALETTE.text;
   const ctaSubTextOpacity = canRegister ? 0.9 : 0.7;
 
+  // Ref para evitar múltiples cargas iniciales
+  const initialLoadDoneRef = useRef(false);
+  const lastStatusRef = useRef<string | null>(null);
+  const lastUserIdRef = useRef<string | null>(null);
+  
+  // Resetear refs cuando cambia el usuario
   useEffect(() => {
-    if (!user) return;
-    void loadTodayAttendance();
-    void refreshGeofence({ force: true });
-  }, [user, loadTodayAttendance, refreshGeofence]);
+    if (user?.id !== lastUserIdRef.current) {
+      initialLoadDoneRef.current = false;
+      lastStatusRef.current = null;
+      lastUserIdRef.current = user?.id ?? null;
+    }
+  }, [user?.id]);
 
+  // Cargar datos iniciales solo una vez cuando todo esté listo
   useEffect(() => {
-    if (!user) return;
+    // Esperar a que el auth termine de cargar
+    if (authIsLoading) return;
+    if (!user) {
+      initialLoadDoneRef.current = false;
+      return;
+    }
+    
+    // Esperar a que employee esté cargado (puede ser null si hay error, pero debe estar resuelto)
+    // IMPORTANTE: employee puede ser null (error de carga), pero undefined significa que aún está cargando
+    if (employee === undefined) return;
+    
+    // Solo cargar una vez
+    if (initialLoadDoneRef.current) return;
+    
+    initialLoadDoneRef.current = true;
+    console.log('[HOME] Loading initial data. Employee:', employee?.fullName ?? 'null', 'Sites:', employeeSites?.length ?? 0);
+    
+    // Cargar asistencia siempre, incluso si employee es null
+    void loadTodayAttendance();
+    
+    // Si no hay employee o sedes, no intentar geofence
+    if (!employee || !employeeSites || employeeSites.length === 0) {
+      console.log('[HOME] No employee or sites, skipping geofence check');
+      return;
+    }
+    
+    // CRÍTICO: En producción, hacer verificación inmediata del geofence al cargar
+    // No solo depender del realtime watch que puede tardar
+    console.log('[HOME] Initial geofence check on load');
     void refreshGeofence({ force: true });
-  }, [attendanceState.status, user, refreshGeofence]);
+    
+    // También iniciar el realtime watch después de un pequeño delay
+    const timer = setTimeout(() => {
+      // El realtime watch se iniciará en useFocusEffect, pero aquí podemos asegurar
+      // que el geofence esté verificado primero
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [user, authIsLoading, employee, employeeSites]); // Sin dependencias de funciones
+
+  // Actualizar geofence cuando cambia el estado de asistencia (solo si realmente cambió)
+  useEffect(() => {
+    if (!user || !initialLoadDoneRef.current) return;
+    
+    const currentStatus = attendanceState.status;
+    // Solo actualizar si el status realmente cambió
+    if (lastStatusRef.current === currentStatus) return;
+    lastStatusRef.current = currentStatus;
+    
+    // Solo actualizar si el status cambió a algo diferente de not_checked_in inicial
+    if (currentStatus === "not_checked_in" && !attendanceState.lastCheckIn) return;
+    
+    const timer = setTimeout(() => {
+      void refreshGeofence({ force: true });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [attendanceState.status, user]); // Solo depende del status, no de funciones
 
   // Recargar tiempo trabajado cada minuto cuando hay check-in activo
   useEffect(() => {
     if (!isCheckedIn || !user) return;
     
-    // Recargar inmediatamente y luego cada minuto
+    // Recargar cada minuto
     const interval = setInterval(() => {
       void loadTodayAttendance();
     }, 60000); // Cada 60 segundos
     
     return () => clearInterval(interval);
-  }, [isCheckedIn, user, loadTodayAttendance]);
+  }, [isCheckedIn, user]); // Sin dependencia de función
 
+  // Timeout de seguridad: si se queda en "checking" más de 15 segundos, mostrar mensaje
+  const [stuckTimeout, setStuckTimeout] = useState(false);
+  
+  useEffect(() => {
+    if (geofenceState.status !== "checking") {
+      setStuckTimeout(false);
+      return;
+    }
+    if (!geofenceState.updatedAt) return;
+    
+    const timeSinceUpdate = Date.now() - geofenceState.updatedAt;
+    if (timeSinceUpdate > 15000 && !stuckTimeout) {
+      // Si lleva más de 15 segundos en "checking", marcar como timeout
+      console.warn('[HOME] Geofence stuck in checking state for too long');
+      setStuckTimeout(true);
+    }
+  }, [geofenceState.status, geofenceState.updatedAt, stuckTimeout]);
+
+  // Ref para evitar múltiples inicios de realtime geofence
+  const realtimeStartedRef = useRef(false);
+  const initialGeofenceCheckedRef = useRef(false);
+  
   useFocusEffect(
     useCallback(() => {
-      if (!user) return;
+      if (!user || realtimeStartedRef.current) return;
+      realtimeStartedRef.current = true;
+      
+      // CRÍTICO: En producción, hacer una verificación inicial inmediata del geofence
+      // antes de iniciar el realtime watch, para asegurar que esté listo
+      if (!initialGeofenceCheckedRef.current && employeeSites && employeeSites.length > 0) {
+        initialGeofenceCheckedRef.current = true;
+        console.log('[HOME] Initial geofence check on focus');
+        void refreshGeofence({ force: true });
+      }
+      
       void startRealtimeGeofence();
-      return () => stopRealtimeGeofence();
-    }, [user, startRealtimeGeofence, stopRealtimeGeofence]),
+      return () => {
+        realtimeStartedRef.current = false;
+        stopRealtimeGeofence();
+      };
+    }, [user, employeeSites]), // Incluir employeeSites para verificar cuando esté disponible
   );
 
   useEffect(() => {
@@ -327,12 +424,45 @@ export default function HomeScreen() {
       return;
     }
 
-    const geo = geofenceState.canProceed
-      ? geofenceState
-      : await refreshGeofence({ force: true });
+    // CRÍTICO: En producción, el geofence puede estar en "idle" y nunca haberse verificado
+    // Si está en "idle" o no está listo, forzar una verificación inmediata
+    let geo = geofenceState;
+    const needsVerification = geo.status === "idle" || geo.status === "checking" || !geo.canProceed;
+    
+    if (needsVerification) {
+      console.log('[HOME] Geofence not ready, forcing immediate verification...', {
+        status: geo.status,
+        canProceed: geo.canProceed,
+        siteId: geo.siteId
+      });
+      
+      // Forzar verificación inmediata
+      geo = await refreshGeofence({ force: true });
+      
+      // Si aún está "checking" o "idle", esperar hasta que esté listo (máximo 8 segundos)
+      const maxWait = 8000;
+      const startTime = Date.now();
+      let attempts = 0;
+      const maxAttempts = 6;
+      
+      while ((geo.status === "checking" || geo.status === "idle" || !geo.canProceed) && 
+             (Date.now() - startTime) < maxWait && 
+             attempts < maxAttempts &&
+             geo.status !== "blocked" && 
+             geo.status !== "error") {
+        console.log(`[HOME] Waiting for geofence (${geo.status})... (attempt ${attempts + 1}/${maxAttempts})`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        geo = await refreshGeofence({ force: true });
+        attempts++;
+        
+        if (geo.canProceed && geo.status === "ready") break;
+      }
+    }
 
     if (!geo.canProceed) {
-      const msg = geo.message || "ubicación no verificada";
+      const msg = geo.status === "idle" 
+        ? "La verificación de ubicación no se ha completado. Intenta de nuevo."
+        : (geo.message || "Ubicación no verificada");
       setActionError(msg);
       Alert.alert("No se puede registrar", msg);
       return;
@@ -1570,7 +1700,7 @@ export default function HomeScreen() {
               {isOffline
                 ? "Sin conexión: no podras registrar asistencia."
                 : geofenceState.status === "ready"
-                  ? "ubicación verificada. Ya puedes registrar."
+                  ? "Ubicación verificada. Ya tienes permiso para registrar."
                   : geofenceState.message ||
                     "Verifica tu ubicación para poder registrar."}
             </Text>
@@ -1580,29 +1710,38 @@ export default function HomeScreen() {
             onPress={handleCheck}
             disabled={!canRegister}
             style={[
-              UI.ctaBase,
-              canRegister ? UI.ctaShadow : null,
               {
+                borderRadius: 20,
+                paddingVertical: 18,
+                paddingHorizontal: 24,
+                alignItems: "center",
+                justifyContent: "center",
                 backgroundColor: canRegister
                   ? PALETTE.accent
                   : RGBA.ctaDisabled,
+                borderWidth: canRegister ? 0 : 1,
                 borderColor: canRegister ? "transparent" : PALETTE.border,
+                shadowColor: canRegister ? PALETTE.accent : "transparent",
+                shadowOpacity: canRegister ? 0.3 : 0,
+                shadowRadius: canRegister ? 12 : 0,
+                shadowOffset: { width: 0, height: 6 },
+                elevation: canRegister ? 6 : 0,
+                minHeight: 64,
               },
             ]}
+            activeOpacity={0.85}
           >
-            {canRegister ? (
-              <View pointerEvents="none" style={UI.ctaHighlight} />
-            ) : null}
             {isLoading || isGeoChecking ? (
               <View
-                style={{ flexDirection: "row", alignItems: "center", gap: 10 }}
+                style={{ flexDirection: "row", alignItems: "center", gap: 12 }}
               >
-                <ActivityIndicator color={ctaTextColor} />
+                <ActivityIndicator color={ctaTextColor} size="small" />
                 <Text
                   style={{
-                    fontSize: 14,
+                    fontSize: 16,
                     fontWeight: "800",
                     color: ctaTextColor,
+                    letterSpacing: 0.3,
                   }}
                 >
                   {isGeoChecking
@@ -1611,13 +1750,15 @@ export default function HomeScreen() {
                 </Text>
               </View>
             ) : (
-              <View style={{ alignItems: "center" }}>
+              <View style={{ alignItems: "center", gap: 4 }}>
                 <Text
                   style={{
-                    fontSize: 12,
-                    fontWeight: "800",
+                    fontSize: 13,
+                    fontWeight: "700",
                     color: ctaTextColor,
-                    opacity: ctaSubTextOpacity,
+                    opacity: canRegister ? 0.95 : 0.6,
+                    letterSpacing: 0.5,
+                    textTransform: "uppercase",
                   }}
                 >
                   {isCheckedIn ? "Registrar salida" : "Registrar entrada"}
@@ -1625,10 +1766,10 @@ export default function HomeScreen() {
 
                 <Text
                   style={{
-                    fontSize: 16,
+                    fontSize: 18,
                     fontWeight: "800",
                     color: ctaTextColor,
-                    marginTop: 6,
+                    letterSpacing: 0.2,
                   }}
                 >
                   {isCheckedIn ? "Terminar turno" : "Iniciar turno"}
