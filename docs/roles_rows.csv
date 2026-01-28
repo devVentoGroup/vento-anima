@@ -1,0 +1,15 @@
+code,name,description,is_active,created_at,updated_at
+barista,Barista,Barista,true,2026-01-18 17:10:40.064109+00,2026-01-18 17:10:40.064109+00
+bodeguero,Bodeguero,Bodega e inventario,true,2026-01-18 17:10:40.064109+00,2026-01-18 17:10:40.064109+00
+cajero,Cajero,Caja y cobros,true,2026-01-18 17:10:40.064109+00,2026-01-18 17:10:40.064109+00
+cocinero,Cocinero,Cocina,true,2026-01-18 17:10:40.064109+00,2026-01-18 17:10:40.064109+00
+conductor,Conductor,Transporte y remisiones,true,2026-01-18 17:10:40.064109+00,2026-01-18 17:10:40.064109+00
+contador,Contador,Finanzas y contabilidad,true,2026-01-18 17:10:40.064109+00,2026-01-18 17:10:40.064109+00
+gerente,Gerente,Gerente de sede,true,2026-01-18 17:10:40.064109+00,2026-01-18 17:10:40.064109+00
+gerente_general,Gerente General,Gerencia global multi-sede,true,2026-01-18 17:10:40.064109+00,2026-01-18 17:10:40.064109+00
+marketing,Marketing,Marketing y growth,true,2026-01-18 17:10:40.064109+00,2026-01-18 17:10:40.064109+00
+mesero,Mesero,Servicio en sala,true,2026-01-18 17:10:40.064109+00,2026-01-18 17:10:40.064109+00
+panadero,Panadero,Panaderia,true,2026-01-18 17:10:40.064109+00,2026-01-18 17:10:40.064109+00
+pastelero,Pastelero,Pasteleria,true,2026-01-18 17:10:40.064109+00,2026-01-18 17:10:40.064109+00
+propietario,Propietario,Dueno y gerente general,true,2026-01-18 17:10:40.064109+00,2026-01-18 17:10:40.064109+00
+repostero,Repostero,Reposteria,true,2026-01-18 17:10:40.064109+00,2026-01-18 17:10:40.064109+00
