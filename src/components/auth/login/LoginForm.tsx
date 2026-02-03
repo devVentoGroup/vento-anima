@@ -11,6 +11,7 @@ import {
 import type { TextInput as RNTextInput } from "react-native";
 import Animated from "react-native-reanimated";
 import { COLORS } from "@/constants/colors";
+import { isReviewEmail } from "@/utils/auth";
 
 type LoginFormProps = {
   email: string;
@@ -52,7 +53,9 @@ export default function LoginForm({
       <View style={styles.cardInner}>
         <Text style={styles.cardTitle}>Ingresar</Text>
         <Text style={styles.cardHint}>
-          Usa las credenciales proporcionadas por tu empleador
+          {isReviewEmail(email)
+            ? "Cuenta de revisión: usa la contraseña indicada en App Store Connect / Google Play."
+            : "Usa las credenciales proporcionadas por tu empleador"}
         </Text>
 
         <View style={styles.field}>
@@ -77,7 +80,9 @@ export default function LoginForm({
         </View>
 
         <View style={styles.field}>
-          <Text style={styles.label}>Contraseña</Text>
+          <Text style={styles.label}>
+            {isReviewEmail(email) ? "Contraseña (revisión)" : "Contraseña"}
+          </Text>
           <View style={styles.passwordRow}>
             <TextInput
               ref={passwordRef}

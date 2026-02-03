@@ -1,12 +1,15 @@
--- Script para crear cuenta de prueba para revisión de Google Play
--- Ejecutar en Supabase SQL Editor
+-- Script para crear cuenta de revisión (Apple App Store / Google Play).
+-- Cuenta allowlist: login con password fijo, sin OTP. Ejecutar en Supabase SQL Editor.
+--
+-- Credenciales estándar (Opción A):
+--   Email: test@ventogroup.com
+--   Password: TestPass123
 
--- CONFIGURACIÓN (cambia estos valores según necesites)
 DO $$
 DECLARE
-  test_email TEXT := 'play-review@vento-anima.test';
-  test_password TEXT := 'PlayReview2026!';
-  test_full_name TEXT := 'Google Play Reviewer';
+  test_email TEXT := 'test@ventogroup.com';
+  test_password TEXT := 'TestPass123';
+  test_full_name TEXT := 'App Review (Apple/Google)';
   test_role TEXT; -- Se determinará consultando las reglas reales
   test_site_id UUID; -- Se obtendrá automáticamente del primer sitio disponible
   test_site_type public.site_type; -- Tipo enum para site_type
