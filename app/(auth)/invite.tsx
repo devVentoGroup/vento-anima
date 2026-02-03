@@ -1,71 +1,172 @@
-import { useState } from "react"
+﻿import { useEffect, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native"
-import { useSafeAreaInsets } from "react-native-safe-area-context"
-import { useRouter } from "expo-router"
-import { COLORS } from "@/constants/colors"
-import { supabase } from "@/lib/supabase"
-import { useAuth } from "@/contexts/auth-context"
+} from "react-native";
+import * as Linking from "expo-linking";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
+import { COLORS } from "@/constants/colors";
+import { supabase } from "@/lib/supabase";
+import InviteContent from "@/components/auth/invite/InviteContent";
+
+const parseTokensFromUrl = (url: string) => {
+  const hash = url.split("#")[1] ?? "";
+  const hashParams = new URLSearchParams(hash);
+  const query = url.split("?")[1]?.split("#")[0] ?? "";
+  const queryParams = new URLSearchParams(query);
+  return {
+    accessToken:
+      hashParams.get("access_token") ?? queryParams.get("access_token"),
+    refreshToken:
+      hashParams.get("refresh_token") ?? queryParams.get("refresh_token"),
+  };
+};
 
 export default function InviteScreen() {
-  const insets = useSafeAreaInsets()
-  const router = useRouter()
-  const { signIn } = useAuth()
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
 
-  const [token, setToken] = useState("")
-  const [password, setPassword] = useState("")
-  const [confirmPassword, setConfirmPassword] = useState("")
-  const [loading, setLoading] = useState(false)
+  const [fullName, setFullName] = useState("");
+  const [alias, setAlias] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const applyTokens = async (url: string | null) => {
+      const { data } = await supabase.auth.getSession();
+      if (!active) return;
+
+      if (data.session) {
+        setReady(true);
+        return;
+      }
+
+      if (!url) {
+        setErrorMessage("No encontramos tu enlace de invitación.");
+        return;
+      }
+
+      const { accessToken, refreshToken } = parseTokensFromUrl(url);
+      if (!accessToken || !refreshToken) {
+        setErrorMessage("El enlace de invitación no es válido o venció.");
+        return;
+      }
+
+      const { error } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+
+      if (!active) return;
+
+      if (error) {
+        console.error("Invite session error:", error);
+        setErrorMessage("No se pudo validar la invitación.");
+        return;
+      }
+
+      setReady(true);
+    };
+
+    void Linking.getInitialURL().then((url) => applyTokens(url));
+
+    const subscription = Linking.addEventListener("url", (event) => {
+      void applyTokens(event.url);
+    });
+
+    return () => {
+      active = false;
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    let active = true;
+
+    const loadProfile = async () => {
+      const { data } = await supabase.auth.getUser();
+      if (!active) return;
+      const metaName = String(data.user?.user_metadata?.full_name ?? "").trim();
+      if (metaName && !fullName) {
+        setFullName(metaName);
+        return;
+      }
+      const email = data.user?.email;
+      if (!email || fullName) return;
+      const { data: profile } = await supabase
+        .from("users")
+        .select("full_name")
+        .eq("email", email)
+        .maybeSingle();
+      if (!active) return;
+      const profileName = String(profile?.full_name ?? "").trim();
+      if (profileName && !fullName) {
+        setFullName(profileName);
+      }
+    };
+
+    void loadProfile();
+
+    return () => {
+      active = false;
+    };
+  }, [ready, fullName]);
 
   const handleAccept = async () => {
-    if (!token.trim()) {
-      Alert.alert("Invitacion", "Escribe el codigo de invitacion.")
-      return
+    if (!ready) {
+      Alert.alert("Invitación", "Aún estamos validando la invitación.");
+      return;
     }
     if (!password || password.length < 8) {
-      Alert.alert("Invitacion", "La contrasena debe tener al menos 8 caracteres.")
-      return
+      Alert.alert(
+        "Invitación",
+        "La contraseña debe tener al menos 8 caracteres.",
+      );
+      return;
     }
     if (password !== confirmPassword) {
-      Alert.alert("Invitacion", "Las contrasenas no coinciden.")
-      return
+      Alert.alert("Invitación", "Las contraseñas no coinciden.");
+      return;
     }
 
-    setLoading(true)
+    setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke(
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+
+      const { error } = await supabase.functions.invoke(
         "staff-invitations-accept",
         {
-          body: { token: token.trim(), password },
+          body: {
+            password,
+            full_name: fullName.trim() || null,
+            alias: alias.trim() || null,
+          },
+          headers: accessToken
+            ? { Authorization: `Bearer ${accessToken}` }
+            : undefined,
         },
-      )
-      if (error) throw error
+      );
 
-      if (data?.email) {
-        await signIn(data.email, password)
-      } else {
-        Alert.alert(
-          "Invitacion",
-          "Cuenta creada. Inicia sesion con el correo invitado.",
-        )
-        router.replace("/login")
-      }
+      if (error) throw error;
+      router.replace("/home");
     } catch (err) {
-      console.error("Invite accept error:", err)
-      Alert.alert("Invitacion", "No se pudo activar la invitacion.")
+      console.error("Invite accept error:", err);
+      Alert.alert("Invitación", "No se pudo activar la invitación.");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   return (
     <KeyboardAvoidingView
@@ -80,61 +181,24 @@ export default function InviteScreen() {
         }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.title}>Activar invitacion</Text>
-        <Text style={styles.subtitle}>
-          Ingresa el codigo y crea tu contrasena.
-        </Text>
-
-        <Text style={styles.label}>Codigo</Text>
-        <TextInput
-          value={token}
-          onChangeText={setToken}
-          placeholder="Ej: 7c2e..."
-          placeholderTextColor={COLORS.neutral}
-          style={styles.input}
-          autoCapitalize="none"
-          autoCorrect={false}
+        <InviteContent
+          fullName={fullName}
+          alias={alias}
+          password={password}
+          confirmPassword={confirmPassword}
+          loading={loading}
+          ready={ready}
+          errorMessage={errorMessage}
+          onFullNameChange={setFullName}
+          onAliasChange={setAlias}
+          onPasswordChange={setPassword}
+          onConfirmPasswordChange={setConfirmPassword}
+          onSubmit={handleAccept}
+          onBack={() => router.replace("/login")}
         />
-
-        <Text style={styles.label}>Contrasena</Text>
-        <TextInput
-          value={password}
-          onChangeText={setPassword}
-          placeholder="Minimo 8 caracteres"
-          placeholderTextColor={COLORS.neutral}
-          style={styles.input}
-          secureTextEntry
-        />
-
-        <Text style={styles.label}>Confirmar contrasena</Text>
-        <TextInput
-          value={confirmPassword}
-          onChangeText={setConfirmPassword}
-          placeholder="Repite la contrasena"
-          placeholderTextColor={COLORS.neutral}
-          style={styles.input}
-          secureTextEntry
-        />
-
-        <TouchableOpacity
-          onPress={handleAccept}
-          disabled={loading}
-          style={[
-            styles.primaryButton,
-            loading ? { opacity: 0.7 } : null,
-          ]}
-        >
-          <Text style={styles.primaryButtonText}>
-            {loading ? "Activando..." : "Activar cuenta"}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={() => router.replace("/login")}>
-          <Text style={styles.link}>Volver a iniciar sesion</Text>
-        </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
-  )
+  );
 }
 
 const styles = StyleSheet.create({
@@ -142,45 +206,4 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.porcelain,
   },
-  title: {
-    fontSize: 26,
-    fontWeight: "800",
-    color: COLORS.text,
-  },
-  subtitle: {
-    marginTop: 6,
-    fontSize: 13,
-    color: COLORS.neutral,
-  },
-  label: {
-    marginTop: 16,
-    fontSize: 12,
-    color: COLORS.neutral,
-  },
-  input: {
-    marginTop: 6,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.white,
-    padding: 12,
-    color: COLORS.text,
-  },
-  primaryButton: {
-    marginTop: 24,
-    paddingVertical: 14,
-    borderRadius: 16,
-    backgroundColor: COLORS.accent,
-    alignItems: "center",
-  },
-  primaryButtonText: {
-    fontWeight: "800",
-    color: "white",
-  },
-  link: {
-    marginTop: 16,
-    color: COLORS.accent,
-    textAlign: "center",
-    fontWeight: "700",
-  },
-})
+});

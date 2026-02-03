@@ -152,31 +152,23 @@ serve(async (req) => {
     })
   }
 
-  const tokenValue = crypto.randomUUID()
-  const expiresDays = Number.isFinite(payload.expires_days)
-    ? Number(payload.expires_days)
-    : 7
-  const expiresAt = new Date(Date.now() + expiresDays * 86400000).toISOString()
+  const inviteRedirect =
+    Deno.env.get("INVITE_REDIRECT_URL") ??
+    Deno.env.get("EXPO_PUBLIC_INVITE_URL") ??
+    "anima://invite"
 
-  const { data: userRow } = await supabase
-    .from("users")
-    .select("id")
-    .eq("id", userData.user.id)
-    .maybeSingle()
+  const { data: inviteData, error: inviteError } =
+    await supabase.auth.admin.inviteUserByEmail(email, {
+      redirectTo: inviteRedirect,
+      data: {
+        role,
+        site_id: siteId,
+        full_name: payload.full_name ?? null,
+      },
+    })
 
-  const { error: insertError } = await supabase.from("staff_invitations").insert({
-    token: tokenValue,
-    email,
-    full_name: payload.full_name ?? null,
-    staff_site_id: siteId,
-    staff_role: role,
-    status: "pending",
-    expires_at: expiresAt,
-    created_by: userRow?.id ?? null,
-  })
-
-  if (insertError) {
-    return new Response(JSON.stringify({ error: insertError.message }), {
+  if (inviteError) {
+    return new Response(JSON.stringify({ error: inviteError.message }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
@@ -184,10 +176,10 @@ serve(async (req) => {
 
   return new Response(
     JSON.stringify({
-      token: tokenValue,
+      invited: true,
       email,
-      full_name: payload.full_name ?? null,
-      expires_at: expiresAt,
+      invite_user_id: inviteData?.user?.id ?? null,
+      invite_redirect: inviteRedirect,
     }),
     {
       status: 200,

@@ -2,12 +2,9 @@
 import {
   ActivityIndicator,
   Alert,
-  Modal,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -19,32 +16,21 @@ import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
+import TeamEmptyState from "@/components/team/TeamEmptyState";
+import TeamMemberCard from "@/components/team/TeamMemberCard";
+import TeamEditModal from "@/components/team/TeamEditModal";
+import TeamInviteModal from "@/components/team/TeamInviteModal";
+import { TEAM_UI } from "@/components/team/ui";
+import type {
+  EditFormState,
+  EmployeeRow,
+  InviteFormState,
+  RoleRow,
+  SiteRow,
+} from "@/components/team/types";
 
-type EmployeeRow = {
-  id: string;
-  full_name: string;
-  alias: string | null;
-  role: string;
-  site_id: string | null;
-  is_active: boolean | null;
-  sites?: { id: string; name: string } | null;
-};
 type EmployeeRowDb = Omit<EmployeeRow, "sites"> & {
   sites?: { id: string; name: string } | { id: string; name: string }[] | null;
-};
-
-type SiteRow = {
-  id: string;
-  name: string;
-  site_type: string | null;
-  type: string | null;
-  is_active: boolean | null;
-};
-
-type RoleRow = {
-  code: string;
-  name: string;
-  is_active: boolean | null;
 };
 
 type EmployeeSiteRow = {
@@ -57,47 +43,7 @@ type EmployeeSiteRowDb = Omit<EmployeeSiteRow, "sites"> & {
   sites?: { id: string; name: string } | { id: string; name: string }[] | null;
 };
 
-type EditFormState = {
-  fullName: string;
-  alias: string;
-  role: string;
-  isActive: boolean;
-  primarySiteId: string | null;
-  siteIds: string[];
-};
-
-type InviteFormState = {
-  email: string;
-  fullName: string;
-  role: string;
-  siteId: string | null;
-};
-
-const UI = {
-  card: {
-    backgroundColor: "white",
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    shadowColor: COLORS.text,
-    shadowOpacity: 0.06,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 4,
-  },
-  chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  pill: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-} as const;
+const UI = TEAM_UI;
 
 const OWNER_ROLE = "propietario";
 const GLOBAL_MANAGER_ROLE = "gerente_general";
@@ -142,8 +88,8 @@ export default function TeamScreen() {
   });
   const [isSaving, setIsSaving] = useState(false);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
-  const [inviteToken, setInviteToken] = useState<string | null>(null);
   const [isInviting, setIsInviting] = useState(false);
+  const [inviteEmailSent, setInviteEmailSent] = useState<string | null>(null);
   const [inviteForm, setInviteForm] = useState<InviteFormState>({
     email: "",
     fullName: "",
@@ -526,9 +472,26 @@ export default function TeamScreen() {
       | "inviteRole"
       | "inviteSite",
   ) => {
-    setPickerQuery("")
-    setActivePicker(picker)
-  }
+    setPickerQuery("");
+    setActivePicker(picker);
+  };
+
+  const updateForm = (patch: Partial<EditFormState>) => {
+    setForm((prev) => ({ ...prev, ...patch }));
+  };
+
+  const updateInviteForm = (patch: Partial<InviteFormState>) => {
+    setInviteForm((prev) => ({ ...prev, ...patch }));
+  };
+
+  const closePicker = () => {
+    setActivePicker(null);
+  };
+
+  const openEditPicker = (picker: "editRole" | "editPrimary" | "editSites") =>
+    openPicker(picker);
+  const openInvitePicker = (picker: "inviteRole" | "inviteSite") =>
+    openPicker(picker);
 
   const openInvite = () => {
     if (!canManageTeam) return;
@@ -545,7 +508,7 @@ export default function TeamScreen() {
       role: "",
       siteId: defaultSite,
     });
-    setInviteToken(null);
+    setInviteEmailSent(null);
     setIsInviteOpen(true);
     setActivePicker(null);
     setPickerQuery("");
@@ -553,7 +516,7 @@ export default function TeamScreen() {
 
   const closeInvite = () => {
     setIsInviteOpen(false);
-    setInviteToken(null);
+    setInviteEmailSent(null);
     setActivePicker(null);
     setPickerQuery("");
   };
@@ -596,11 +559,11 @@ export default function TeamScreen() {
       );
 
       if (error) throw error;
-      if (!data?.token) {
-        throw new Error("No se pudo generar la invitación.");
+      if (!data?.invited) {
+        throw new Error("No se pudo enviar la invitación.");
       }
 
-      setInviteToken(data.token);
+      setInviteEmailSent(inviteForm.email.trim());
     } catch (err) {
       console.error("Invite error:", err);
       Alert.alert("Equipo", "No se pudo crear la invitación.");
@@ -657,6 +620,17 @@ export default function TeamScreen() {
     const q = pickerQuery.trim().toLowerCase();
     return sites.filter((site) => site.name.toLowerCase().includes(q));
   }, [sites, pickerQuery]);
+
+  const editPicker =
+    activePicker === "editRole" ||
+    activePicker === "editPrimary" ||
+    activePicker === "editSites"
+      ? activePicker
+      : null;
+  const invitePicker =
+    activePicker === "inviteRole" || activePicker === "inviteSite"
+      ? activePicker
+      : null;
 
   return (
     <View style={styles.root}>
@@ -780,35 +754,11 @@ export default function TeamScreen() {
         ) : null}
 
         {!isLoading && filteredEmployees.length === 0 ? (
-          <View style={{ marginTop: 18 }}>
-            <View style={[UI.card, { padding: 18, alignItems: "center" }]}>
-              <View
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 14,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  backgroundColor: "rgba(226, 0, 106, 0.10)",
-                  borderWidth: 1,
-                  borderColor: "rgba(226, 0, 106, 0.18)",
-                }}
-              >
-                <Ionicons name="people-outline" size={22} color={COLORS.accent} />
-              </View>
-              <Text style={styles.emptyTitle}>Sin trabajadores</Text>
-              <Text style={styles.emptySubtitle}>
-                Aún no hay perfiles de equipo para este filtro.
-              </Text>
-            </View>
-          </View>
+          <TeamEmptyState />
         ) : null}
 
         <View style={{ marginTop: 18, gap: 12 }}>
           {filteredEmployees.map((item) => {
-            const statusActive = item.is_active !== false;
-            const statusColor = statusActive ? COLORS.rosegold : COLORS.neutral;
-            const siteName = item.sites?.name ?? "Sin sede";
             const isSelf = item.id === user?.id;
             let canEditItem = canManageTeam;
 
@@ -826,597 +776,68 @@ export default function TeamScreen() {
             if (!canAssignRole(item.role) && !isSelf) {
               canEditItem = false;
             }
+
             return (
-              <View key={item.id} style={[UI.card, { padding: 14 }]}>
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <View
-                    style={{
-                      width: 40,
-                      height: 40,
-                      borderRadius: 14,
-                      alignItems: "center",
-                      justifyContent: "center",
-                      backgroundColor: "rgba(226, 0, 106, 0.10)",
-                      borderWidth: 1,
-                      borderColor: "rgba(226, 0, 106, 0.18)",
-                      marginRight: 12,
-                    }}
-                  >
-                    <Text style={{ fontWeight: "800", color: COLORS.accent }}>
-                      {item.full_name?.charAt(0).toUpperCase() ?? "?"}
-                    </Text>
-                  </View>
-
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.employeeName} numberOfLines={1}>
-                      {formatName(item)}
-                    </Text>
-                    <Text style={styles.employeeMeta} numberOfLines={1}>
-                      {roleLabel(item.role)} · {siteName}
-                    </Text>
-                  </View>
-
-                  <View
-                    style={[
-                      UI.pill,
-                      {
-                        borderColor: statusColor,
-                        backgroundColor:
-                          statusActive && statusColor === COLORS.rosegold
-                            ? "rgba(242, 198, 192, 0.28)"
-                            : COLORS.porcelainAlt,
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 11,
-                        fontWeight: "800",
-                        color: statusColor,
-                      }}
-                    >
-                      {statusActive ? "Activo" : "Inactivo"}
-                    </Text>
-                  </View>
-                </View>
-
-                {canEditItem ? (
-                  <TouchableOpacity
-                    onPress={() => startEdit(item)}
-                    style={[
-                      UI.chip,
-                      {
-                        marginTop: 12,
-                        borderColor: COLORS.accent,
-                        backgroundColor: "rgba(226, 0, 106, 0.10)",
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 8,
-                        justifyContent: "center",
-                      },
-                    ]}
-                  >
-                    <Ionicons name="create-outline" size={16} color={COLORS.accent} />
-                    <Text style={{ fontWeight: "800", color: COLORS.accent }}>
-                      Editar
-                    </Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
+              <TeamMemberCard
+                key={item.id}
+                employee={item}
+                formatName={formatName}
+                roleLabel={roleLabel}
+                canEdit={canEditItem}
+                onEdit={() => startEdit(item)}
+              />
             );
           })}
         </View>
       </ScrollView>
-      <Modal
-        transparent
+      <TeamEditModal
         visible={isEditOpen}
-        animationType="fade"
-        presentationStyle="overFullScreen"
-        onRequestClose={closeEdit}
-      >
-        <View style={styles.modalOverlay}>
-          <Pressable style={StyleSheet.absoluteFillObject} onPress={closeEdit} />
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Editar trabajador</Text>
-            <Text style={styles.modalSubtitle}>
-              Actualiza datos basicos, rol y sedes.
-            </Text>
+        insets={insets}
+        form={form}
+        roleName={roleName}
+        primarySiteLabel={primarySiteLabel}
+        canPickRole={canPickRole}
+        canPickSites={canPickSites}
+        isSaving={isSaving}
+        activePicker={editPicker}
+        pickerQuery={pickerQuery}
+        filteredRoleOptions={filteredRoleOptions}
+        filteredSiteOptions={filteredSiteOptions}
+        onClose={closeEdit}
+        onSave={handleSave}
+        onOpenPicker={openEditPicker}
+        onClosePicker={closePicker}
+        onSetPickerQuery={setPickerQuery}
+        onUpdateForm={updateForm}
+        onToggleSite={toggleSiteSelection}
+        onSetPrimarySite={setPrimarySite}
+      />
 
-            <Text style={styles.modalLabel}>Nombre completo</Text>
-            <TextInput
-              value={form.fullName}
-              onChangeText={(value) =>
-                setForm((prev) => ({ ...prev, fullName: value }))
-              }
-              placeholder="Nombre completo"
-              placeholderTextColor={COLORS.neutral}
-              style={styles.input}
-            />
-
-            <Text style={styles.modalLabel}>Alias</Text>
-            <TextInput
-              value={form.alias}
-              onChangeText={(value) =>
-                setForm((prev) => ({ ...prev, alias: value }))
-              }
-              placeholder="Alias (opcional)"
-              placeholderTextColor={COLORS.neutral}
-              style={styles.input}
-            />
-
-            <Text style={styles.modalLabel}>Rol</Text>
-            <TouchableOpacity
-              onPress={canPickRole ? () => openPicker("editRole") : undefined}
-              disabled={!canPickRole}
-              style={[
-                UI.chip,
-                {
-                  borderColor: COLORS.border,
-                  backgroundColor: COLORS.porcelainAlt,
-                  marginTop: 6,
-                  opacity: canPickRole ? 1 : 0.6,
-                },
-              ]}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Text style={{ fontWeight: "700", color: COLORS.text, flex: 1 }}>
-                  {roleName ?? "Selecciona un rol"}
-                </Text>
-                <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
-              </View>
-            </TouchableOpacity>
-
-            <Text style={styles.modalLabel}>Sede principal</Text>
-            <TouchableOpacity
-              onPress={canPickSites ? () => openPicker("editPrimary") : undefined}
-              disabled={!canPickSites}
-              style={[
-                UI.chip,
-                {
-                  borderColor: COLORS.border,
-                  backgroundColor: COLORS.porcelainAlt,
-                  marginTop: 6,
-                  opacity: canPickSites ? 1 : 0.6,
-                },
-              ]}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Text style={{ fontWeight: "700", color: COLORS.text, flex: 1 }}>
-                  {primarySiteLabel ?? "Selecciona la sede principal"}
-                </Text>
-                <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
-              </View>
-            </TouchableOpacity>
-
-            {canPickSites ? (
-              <>
-                <Text style={styles.modalLabel}>Sedes asignadas</Text>
-                <TouchableOpacity
-                  onPress={() => openPicker("editSites")}
-                  style={[
-                    UI.chip,
-                    {
-                      borderColor: COLORS.border,
-                      backgroundColor: COLORS.porcelainAlt,
-                      marginTop: 6,
-                    },
-                  ]}
-                >
-                  <View
-                    style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
-                  >
-                    <Text style={{ fontWeight: "700", color: COLORS.text, flex: 1 }}>
-                      {form.siteIds.length
-                        ? `${form.siteIds.length} sedes seleccionadas`
-                        : "Selecciona sedes"}
-                    </Text>
-                    <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
-                  </View>
-                </TouchableOpacity>
-              </>
-            ) : null}
-
-            <View style={styles.switchRow}>
-              <Text style={styles.switchLabel}>Activo</Text>
-              <Switch
-                value={form.isActive}
-                onValueChange={(value) =>
-                  setForm((prev) => ({ ...prev, isActive: value }))
-                }
-                trackColor={{ false: COLORS.border, true: COLORS.rosegoldBright }}
-                thumbColor={form.isActive ? COLORS.rosegold : COLORS.neutral}
-              />
-            </View>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                onPress={closeEdit}
-                style={[
-                  UI.chip,
-                  {
-                    borderColor: COLORS.border,
-                    backgroundColor: COLORS.porcelainAlt,
-                  },
-                ]}
-              >
-                <Text style={{ fontWeight: "700", color: COLORS.text }}>
-                  Cancelar
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleSave}
-                disabled={isSaving}
-                style={[
-                  UI.chip,
-                  {
-                    borderColor: COLORS.rosegold,
-                    backgroundColor: "rgba(242, 198, 192, 0.25)",
-                    opacity: isSaving ? 0.7 : 1,
-                  },
-                ]}
-              >
-                <Text style={{ fontWeight: "700", color: COLORS.rosegold }}>
-                  {isSaving ? "Guardando..." : "Guardar"}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {activePicker && activePicker.startsWith("edit") ? (
-            <View
-              style={[
-                styles.pickerOverlay,
-                {
-                  paddingTop: Math.max(16, insets.top + 8),
-                  paddingBottom: Math.max(16, insets.bottom + 12),
-                },
-              ]}
-            >
-              <View style={styles.pickerHeader}>
-                <TouchableOpacity
-                  onPress={() => setActivePicker(null)}
-                  style={styles.pickerBack}
-                >
-                  <Ionicons name="arrow-back" size={18} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.pickerTitle}>
-                  {activePicker === "editRole"
-                    ? "Rol"
-                    : activePicker === "editPrimary"
-                      ? "Sede principal"
-                      : "Sedes asignadas"}
-                </Text>
-              </View>
-
-              <View style={styles.pickerSearchWrap}>
-                <TextInput
-                  value={pickerQuery}
-                  onChangeText={setPickerQuery}
-                  placeholder={
-                    activePicker === "editRole"
-                      ? "Buscar rol..."
-                      : "Buscar sede..."
-                  }
-                  placeholderTextColor={COLORS.neutral}
-                  style={styles.pickerSearchInput}
-                />
-              </View>
-
-              <ScrollView contentContainerStyle={styles.pickerList}>
-                {activePicker === "editRole" ? (
-                  filteredRoleOptions.length === 0 ? (
-                    <Text style={styles.modalHint}>No hay roles disponibles.</Text>
-                  ) : (
-                    filteredRoleOptions.map((item) => {
-                      const active = form.role === item.code
-                      return (
-                        <TouchableOpacity
-                          key={item.code}
-                          onPress={() => {
-                            setForm((prev) => ({ ...prev, role: item.code }))
-                            setActivePicker(null)
-                          }}
-                          style={[
-                            styles.pickerItem,
-                            active ? styles.pickerItemActive : null,
-                          ]}
-                        >
-                          <Text style={styles.pickerItemTitle}>{item.name}</Text>
-                        </TouchableOpacity>
-                      )
-                    })
-                  )
-                ) : activePicker === "editPrimary" ? (
-                  filteredSiteOptions.map((site) => {
-                    const active = form.primarySiteId === site.id
-                    return (
-                      <TouchableOpacity
-                        key={site.id}
-                        onPress={() => {
-                          setPrimarySite(site.id)
-                          setActivePicker(null)
-                        }}
-                        style={[
-                          styles.pickerItem,
-                          active ? styles.pickerItemActive : null,
-                        ]}
-                      >
-                        <Text style={styles.pickerItemTitle}>{site.name}</Text>
-                      </TouchableOpacity>
-                    )
-                  })
-                ) : (
-                  filteredSiteOptions.map((site) => {
-                    const selected = form.siteIds.includes(site.id)
-                    const isPrimary = form.primarySiteId === site.id
-                    return (
-                      <View key={site.id} style={styles.siteRow}>
-                        <TouchableOpacity
-                          onPress={() => toggleSiteSelection(site.id)}
-                          style={styles.siteRowLeft}
-                        >
-                          <Ionicons
-                            name={selected ? "checkbox" : "square-outline"}
-                            size={18}
-                            color={selected ? COLORS.accent : COLORS.neutral}
-                          />
-                          <Text style={styles.siteRowText}>{site.name}</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          onPress={() => setPrimarySite(site.id)}
-                          disabled={!selected}
-                          style={styles.siteRowPrimary}
-                        >
-                          <Ionicons
-                            name={isPrimary ? "star" : "star-outline"}
-                            size={18}
-                            color={isPrimary ? COLORS.rosegold : COLORS.neutral}
-                          />
-                        </TouchableOpacity>
-                      </View>
-                    )
-                  })
-                )}
-              </ScrollView>
-            </View>
-          ) : null}
-        </View>
-      </Modal>
-
-
-      <Modal
-        transparent
+      <TeamInviteModal
         visible={isInviteOpen}
-        animationType="fade"
-        presentationStyle="overFullScreen"
-        onRequestClose={closeInvite}
-      >
-        <View style={styles.modalOverlay}>
-          <Pressable style={StyleSheet.absoluteFillObject} onPress={closeInvite} />
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Invitar trabajador</Text>
-            <Text style={styles.modalSubtitle}>
-              Genera un código de invitación para crear la cuenta.
-            </Text>
-
-            <Text style={styles.modalLabel}>Correo</Text>
-            <TextInput
-              value={inviteForm.email}
-              onChangeText={(value) =>
-                setInviteForm((prev) => ({ ...prev, email: value }))
-              }
-              placeholder="correo@empresa.com"
-              placeholderTextColor={COLORS.neutral}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              style={styles.input}
-            />
-
-            <Text style={styles.modalLabel}>Nombre completo</Text>
-            <TextInput
-              value={inviteForm.fullName}
-              onChangeText={(value) =>
-                setInviteForm((prev) => ({ ...prev, fullName: value }))
-              }
-              placeholder="Nombre completo"
-              placeholderTextColor={COLORS.neutral}
-              style={styles.input}
-            />
-
-            <Text style={styles.modalLabel}>Rol</Text>
-            <TouchableOpacity
-              onPress={() => openPicker("inviteRole")}
-              style={[
-                UI.chip,
-                {
-                  borderColor: COLORS.border,
-                  backgroundColor: COLORS.porcelainAlt,
-                  marginTop: 6,
-                },
-              ]}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Text style={{ fontWeight: "700", color: COLORS.text, flex: 1 }}>
-                  {inviteForm.role
-                    ? roleLabel(inviteForm.role)
-                    : "Selecciona un rol"}
-                </Text>
-                <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
-              </View>
-            </TouchableOpacity>
-
-            <Text style={styles.modalLabel}>Sede principal</Text>
-            <TouchableOpacity
-              onPress={canPickSites ? () => openPicker("inviteSite") : undefined}
-              disabled={!canPickSites}
-              style={[
-                UI.chip,
-                {
-                  borderColor: COLORS.border,
-                  backgroundColor: COLORS.porcelainAlt,
-                  marginTop: 6,
-                  opacity: canPickSites ? 1 : 0.6,
-                },
-              ]}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Text style={{ fontWeight: "700", color: COLORS.text, flex: 1 }}>
-                  {inviteForm.siteId
-                    ? sites.find((site) => site.id === inviteForm.siteId)?.name ??
-                      "Selecciona la sede"
-                    : "Selecciona la sede"}
-                </Text>
-                <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
-              </View>
-            </TouchableOpacity>
-
-            {inviteToken ? (
-              <View style={{ marginTop: 12 }}>
-                <Text style={styles.modalLabel}>código de invitación</Text>
-                <View
-                  style={{
-                    marginTop: 6,
-                    borderRadius: 12,
-                    borderWidth: 1,
-                    borderColor: COLORS.border,
-                    padding: 12,
-                    backgroundColor: COLORS.porcelainAlt,
-                  }}
-                >
-                  <Text style={{ fontWeight: "800", color: COLORS.text }}>
-                    {inviteToken}
-                  </Text>
-                </View>
-                <Text style={styles.modalHint}>
-                  Comparte este código para que la persona active su cuenta.
-                </Text>
-              </View>
-            ) : null}
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                onPress={closeInvite}
-                style={[
-                  UI.chip,
-                  {
-                    borderColor: COLORS.border,
-                    backgroundColor: COLORS.porcelainAlt,
-                  },
-                ]}
-              >
-                <Text style={{ fontWeight: "700", color: COLORS.text }}>
-                  {inviteToken ? "Cerrar" : "Cancelar"}
-                </Text>
-              </TouchableOpacity>
-              {!inviteToken ? (
-                <TouchableOpacity
-                  onPress={handleInvite}
-                  disabled={isInviting}
-                  style={[
-                    UI.chip,
-                    {
-                      borderColor: COLORS.rosegold,
-                      backgroundColor: "rgba(242, 198, 192, 0.25)",
-                      opacity: isInviting ? 0.7 : 1,
-                    },
-                  ]}
-                >
-                  <Text style={{ fontWeight: "700", color: COLORS.rosegold }}>
-                    {isInviting ? "Creando..." : "Crear invitación"}
-                  </Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-          </View>
-
-          {activePicker && activePicker.startsWith("invite") ? (
-            <View
-              style={[
-                styles.pickerOverlay,
-                {
-                  paddingTop: Math.max(16, insets.top + 8),
-                  paddingBottom: Math.max(16, insets.bottom + 12),
-                },
-              ]}
-            >
-              <View style={styles.pickerHeader}>
-                <TouchableOpacity
-                  onPress={() => setActivePicker(null)}
-                  style={styles.pickerBack}
-                >
-                  <Ionicons name="arrow-back" size={18} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.pickerTitle}>
-                  {activePicker === "inviteRole" ? "Rol" : "Sede principal"}
-                </Text>
-              </View>
-
-              <View style={styles.pickerSearchWrap}>
-                <TextInput
-                  value={pickerQuery}
-                  onChangeText={setPickerQuery}
-                  placeholder={
-                    activePicker === "inviteRole"
-                      ? "Buscar rol..."
-                      : "Buscar sede..."
-                  }
-                  placeholderTextColor={COLORS.neutral}
-                  style={styles.pickerSearchInput}
-                />
-              </View>
-
-              <ScrollView contentContainerStyle={styles.pickerList}>
-                {activePicker === "inviteRole" ? (
-                  filteredRoleOptions.length === 0 ? (
-                    <Text style={styles.modalHint}>No hay roles disponibles.</Text>
-                  ) : (
-                    filteredRoleOptions.map((item) => {
-                      const active = inviteForm.role === item.code
-                      return (
-                        <TouchableOpacity
-                          key={item.code}
-                          onPress={() => {
-                            setInviteForm((prev) => ({ ...prev, role: item.code }))
-                            setActivePicker(null)
-                          }}
-                          style={[
-                            styles.pickerItem,
-                            active ? styles.pickerItemActive : null,
-                          ]}
-                        >
-                          <Text style={styles.pickerItemTitle}>{item.name}</Text>
-                        </TouchableOpacity>
-                      )
-                    })
-                  )
-                ) : (
-                  filteredSiteOptions.map((site) => {
-                    const active = inviteForm.siteId === site.id
-                    return (
-                      <TouchableOpacity
-                        key={site.id}
-                        onPress={() => {
-                          setInviteForm((prev) => ({ ...prev, siteId: site.id }))
-                          setActivePicker(null)
-                        }}
-                        style={[
-                          styles.pickerItem,
-                          active ? styles.pickerItemActive : null,
-                        ]}
-                      >
-                        <Text style={styles.pickerItemTitle}>{site.name}</Text>
-                      </TouchableOpacity>
-                    )
-                  })
-                )}
-              </ScrollView>
-            </View>
-          ) : null}
-        </View>
-      </Modal>
-
-
+        insets={insets}
+        form={inviteForm}
+        inviteEmailSent={inviteEmailSent}
+        isInviting={isInviting}
+        canPickSites={canPickSites}
+        inviteRoleLabel={inviteForm.role ? roleLabel(inviteForm.role) : null}
+        inviteSiteLabel={
+          inviteForm.siteId
+            ? sites.find((site) => site.id === inviteForm.siteId)?.name ??
+              "Selecciona la sede"
+            : null
+        }
+        activePicker={invitePicker}
+        pickerQuery={pickerQuery}
+        filteredRoleOptions={filteredRoleOptions}
+        filteredSiteOptions={filteredSiteOptions}
+        onClose={closeInvite}
+        onSubmit={handleInvite}
+        onOpenPicker={openInvitePicker}
+        onClosePicker={closePicker}
+        onSetPickerQuery={setPickerQuery}
+        onUpdateForm={updateInviteForm}
+      />
     </View>
   );
 }
@@ -1443,172 +864,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     padding: 12,
     color: COLORS.text,
-  },
-  employeeName: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: COLORS.text,
-  },
-  employeeMeta: {
-    fontSize: 12,
-    color: COLORS.neutral,
-    marginTop: 4,
-  },
-  emptyTitle: {
-    marginTop: 10,
-    fontSize: 14,
-    fontWeight: "800",
-    color: COLORS.text,
-  },
-  emptySubtitle: {
-    marginTop: 6,
-    color: COLORS.neutral,
-    textAlign: "center",
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    padding: 20,
-    justifyContent: "center",
-  },
-  modalCard: {
-    backgroundColor: "white",
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: COLORS.text,
-  },
-  modalSubtitle: {
-    fontSize: 12,
-    color: COLORS.neutral,
-    marginTop: 6,
-  },
-  modalLabel: {
-    fontSize: 12,
-    color: COLORS.neutral,
-    marginTop: 12,
-  },
-  modalHint: {
-    fontSize: 11,
-    color: COLORS.neutral,
-    marginTop: 6,
-  },
-  pickerOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: COLORS.porcelain,
-    paddingTop: 20,
-  },
-  pickerHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 20,
-    paddingBottom: 12,
-  },
-  pickerBack: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.white,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
-  pickerTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: COLORS.text,
-  },
-  pickerSearchWrap: {
-    paddingHorizontal: 20,
-    paddingBottom: 12,
-  },
-  pickerSearchInput: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.white,
-    padding: 12,
-    color: COLORS.text,
-  },
-  pickerList: {
-    paddingHorizontal: 20,
-    paddingBottom: 24,
-    gap: 10,
-  },
-  pickerItem: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.white,
-    padding: 14,
-  },
-  pickerItemActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: "rgba(226, 0, 106, 0.10)",
-  },
-  pickerItemTitle: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: COLORS.text,
-  },
-  modalActions: {
-    flexDirection: "row",
-    gap: 10,
-    justifyContent: "flex-end",
-    marginTop: 16,
-  },
-  modalFooter: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-  },
-  input: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.porcelainAlt,
-    padding: 12,
-    marginTop: 6,
-    color: COLORS.text,
-  },
-  switchRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 16,
-  },
-  switchLabel: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: COLORS.text,
-  },
-  siteRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.borderSoft,
-  },
-  siteRowLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    flex: 1,
-  },
-  siteRowText: {
-    fontSize: 13,
-    color: COLORS.text,
-    fontWeight: "600",
-  },
-  siteRowPrimary: {
-    padding: 6,
   },
 });
 

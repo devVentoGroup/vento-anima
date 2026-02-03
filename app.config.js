@@ -1,4 +1,4 @@
-﻿module.exports = {
+module.exports = {
   expo: {
     name: "ANIMA",
     slug: "anima",
@@ -16,9 +16,10 @@
     },
     assetBundlePatterns: ["**/*"],
     ios: {
+      icon: "./assets/icon-padded.png",
       supportsTablet: true,
       bundleIdentifier: "com.vento.anima",
-      buildNumber: "2",
+      buildNumber: "4",
       infoPlist: {
         NSLocationWhenInUseUsageDescription: "Necesitamos tu ubicación para validar el check-in.",
         "ITSAppUsesNonExemptEncryption": false
@@ -26,7 +27,7 @@
     },
     android: {
       package: "com.vento.anima",
-      versionCode: 2,
+      versionCode: 4,
       adaptiveIcon: {
         foregroundImage: "./assets/adaptive-icon-padded.png",
         backgroundColor: "#F7F5F8"
@@ -38,6 +39,12 @@
       "expo-secure-store",
       "expo-notifications"
     ],
+    updates: {
+      url: "https://u.expo.dev/2e1ba93a-039d-49e7-962d-a33ea7eaf9b3"
+    },
+    runtimeVersion: {
+      policy: "appVersion"
+    },
     extra: {
       router: {},
       eas: {
@@ -46,4 +53,5 @@
     }
   }
 };
+
 

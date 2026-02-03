@@ -64,7 +64,10 @@ export interface AttendanceState {
   status: AttendanceStatus
   lastCheckIn: string | null
   lastCheckOut: string | null
-  todayHours: number
+  lastCheckOutSource: string | null
+  lastCheckOutNotes: string | null
+  todayMinutes: number
+  openStartAt: string | null
   currentSiteName: string | null
 }
 
@@ -102,9 +105,9 @@ export interface GeofenceCheckState {
 }
 
 const ATTENDANCE_GEOFENCE = {
-  // Estricto pero usable:
-  checkIn: { radiusCapMeters: 30, maxAccuracyMeters: 25 },
-  checkOut: { radiusCapMeters: 40, maxAccuracyMeters: 30 },
+  // Debe coincidir con la validacion del trigger en BD
+  checkIn: { radiusCapMeters: 20, maxAccuracyMeters: 20 },
+  checkOut: { radiusCapMeters: 30, maxAccuracyMeters: 25 },
 }
 
 function getAttendanceSource(): string {
@@ -148,7 +151,10 @@ export function useAttendance() {
     status: "not_checked_in",
     lastCheckIn: null,
     lastCheckOut: null,
-    todayHours: 0,
+    lastCheckOutSource: null,
+    lastCheckOutNotes: null,
+    todayMinutes: 0,
+    openStartAt: null,
     currentSiteName: null,
   })
 
@@ -261,7 +267,10 @@ export function useAttendance() {
         status: "not_checked_in",
         lastCheckIn: null,
         lastCheckOut: null,
-        todayHours: 0,
+        lastCheckOutSource: null,
+        lastCheckOutNotes: null,
+        todayMinutes: 0,
+        openStartAt: null,
         currentSiteName: null,
       })
       return
@@ -276,7 +285,7 @@ export function useAttendance() {
     const [{ data: todayLogs, error: todayError }, lastLog] = await Promise.all([
       supabase
         .from("attendance_logs")
-        .select("action, occurred_at, site_id, sites(name)")
+        .select("action, occurred_at, site_id, source, notes, device_info, sites(name)")
         .eq("employee_id", user.id)
         .gte("occurred_at", start.toISOString())
         .lte("occurred_at", end.toISOString())
@@ -297,33 +306,43 @@ export function useAttendance() {
     const lastTodayCheckIn = checkIns[checkIns.length - 1]
     const lastTodayCheckOut = checkOuts[checkOuts.length - 1]
 
-    let totalMinutes = 0
-    for (let i = 0; i < checkIns.length; i++) {
-      const checkIn = new Date(checkIns[i].occurred_at)
-      const checkOut = checkOuts[i]
-        ? new Date(checkOuts[i].occurred_at)
-        : i === checkIns.length - 1
-          ? new Date()
-          : checkIn
+    let completedMinutes = 0
+    let openCheckIn: Date | null = null
 
-      totalMinutes += (checkOut.getTime() - checkIn.getTime()) / 60000
+    for (const log of logs) {
+      if (log.action === "check_in") {
+        openCheckIn = new Date(log.occurred_at)
+        continue
+      }
+      if (log.action === "check_out" && openCheckIn) {
+        const checkOutAt = new Date(log.occurred_at)
+        const diff = (checkOutAt.getTime() - openCheckIn.getTime()) / 60000
+        if (diff > 0) {
+          completedMinutes += diff
+        }
+        openCheckIn = null
+      }
     }
 
     let status: AttendanceStatus = "not_checked_in"
     let currentSiteName: string | null = null
     let lastCheckIn: string | null = null
     let lastCheckOut: string | null = null
+    let openStartAt: string | null = null
 
     if (lastLog?.action === "check_in") {
       status = "checked_in"
       currentSiteName = lastLog.site_name
       lastCheckIn = lastLog.occurred_at
 
-      // si el check-in es previo a hoy, suma desde el inicio del dia
-      if (!lastTodayCheckIn) {
+      if (openCheckIn) {
+        openStartAt = openCheckIn.toISOString()
+      }
+
+      if (!openStartAt && !lastTodayCheckIn) {
         const openStart = new Date(lastLog.occurred_at)
         const from = openStart.getTime() > start.getTime() ? openStart : start
-        totalMinutes += (Date.now() - from.getTime()) / 60000
+        openStartAt = new Date(from).toISOString()
       }
     } else if (lastLog?.action === "check_out") {
       if (lastTodayCheckIn) {
@@ -344,12 +363,19 @@ export function useAttendance() {
 
     lastCheckIn = lastTodayCheckIn?.occurred_at ?? lastCheckIn
     lastCheckOut = lastTodayCheckOut?.occurred_at ?? null
+    const lastCheckOutSource =
+      (lastTodayCheckOut as any)?.source ?? null
+    const lastCheckOutNotes =
+      (lastTodayCheckOut as any)?.notes ?? null
 
     setAttendanceState({
       status,
       lastCheckIn,
       lastCheckOut,
-      todayHours: Math.round((totalMinutes / 60) * 10) / 10,
+      lastCheckOutSource,
+      lastCheckOutNotes,
+      todayMinutes: Math.max(0, Math.round(completedMinutes)),
+      openStartAt,
       currentSiteName,
     })
     setIsOffline(false)
@@ -1256,6 +1282,3 @@ export function useAttendance() {
     stopRealtimeGeofence,
   }
 }
-
-
-

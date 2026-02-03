@@ -159,7 +159,7 @@
 ### Fixes Críticos de Producción (28 enero 2026)
 
 - ✅ **Fix de carga del home en producción**: Permite que employee sea null y carga asistencia de todos modos
-- ✅ **Fix de check-in fallando primera vez**: 
+- ✅ **Fix de check-in fallando primera vez**:
   - Verificación inmediata del geofence al cargar el home
   - Espera activa hasta 8 segundos con múltiples reintentos antes de fallar
   - Detecta estado "idle" y fuerza verificación inmediata antes de proceder

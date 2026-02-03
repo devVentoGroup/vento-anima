@@ -4,8 +4,6 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
-  Modal,
-  Pressable,
   Image,
   RefreshControl,
   ActivityIndicator,
@@ -17,41 +15,16 @@ import { useFocusEffect } from "@react-navigation/native";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import * as MailComposer from "expo-mail-composer";
-import { Calendar } from "react-native-calendars";
+import type { DateData } from "react-native-calendars";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
 import { useAuth } from "@/contexts/auth-context";
 import { useRouter } from "expo-router";
-import { useAttendance } from "@/hooks/use-attendance";
-// ANIMA palette tokens (derivados de /constants/colors)
-const PALETTE = {
-  porcelain: COLORS.porcelain,
-  porcelain2: COLORS.porcelainAlt,
-  text: COLORS.text,
-  accent: COLORS.accent,
-  rose: COLORS.rosegold,
-  roseGlow: COLORS.rosegoldBright, // glow oro rosa (no morado)
-  neutral: COLORS.neutral,
-  border: COLORS.border,
-  white: COLORS.white,
-} as const;
-
-const RGBA = {
-  // Marca súper sutil en fondos
-  washPink: "rgba(226, 0, 106, 0.06)", // accent @ 6%
-  washRoseGlow: "rgba(242, 198, 192, 0.10)", // roseGlow @ 10%
-
-  // Bordes â€œde marcaâ€
-  borderPink: "rgba(226, 0, 106, 0.35)",
-  borderRose: "rgba(183, 110, 121, 0.38)",
-
-  // Estados/CTA
-  ctaDisabled: "rgba(27, 26, 31, 0.08)", // text @ 8%
-  ctaHighlight: "rgba(242, 198, 192, 0.18)", // roseGlow @ 18%
-
-  // Tint superior de cards (muy sutil)
-  cardTint: "rgba(242, 198, 192, 0.12)", // roseGlow @ 12%
-} as const;
+import { useAttendanceContext } from "@/contexts/attendance-context";
+import { DateRangeModal } from "@/components/home/DateRangeModal";
+import { SitePickerModal } from "@/components/home/SitePickerModal";
+import { UserMenuModal } from "@/components/home/UserMenuModal";
+import { PALETTE, RGBA } from "@/components/home/theme";
 function formatClock(value: string | null) {
   if (!value) return "--:--";
   const date = new Date(value);
@@ -64,8 +37,15 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const router = useRouter();
-  const { user, session, employee, signOut, employeeSites, selectedSiteId, isLoading: authIsLoading } =
-    useAuth();
+  const {
+    user,
+    session,
+    employee,
+    signOut,
+    employeeSites,
+    selectedSiteId,
+    isLoading: authIsLoading,
+  } = useAuth();
   const {
     attendanceState,
     geofenceState,
@@ -78,7 +58,7 @@ export default function HomeScreen() {
     selectSiteForCheckIn,
     startRealtimeGeofence,
     stopRealtimeGeofence,
-  } = useAttendance();
+  } = useAttendanceContext();
 
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -117,12 +97,10 @@ export default function HomeScreen() {
   const ctaTextColor = canRegister ? PALETTE.porcelain : PALETTE.text;
   const ctaSubTextOpacity = canRegister ? 0.9 : 0.7;
 
-  // Ref para evitar múltiples cargas iniciales
   const initialLoadDoneRef = useRef(false);
   const lastStatusRef = useRef<string | null>(null);
   const lastUserIdRef = useRef<string | null>(null);
-  
-  // Resetear refs cuando cambia el usuario
+
   useEffect(() => {
     if (user?.id !== lastUserIdRef.current) {
       initialLoadDoneRef.current = false;
@@ -131,118 +109,106 @@ export default function HomeScreen() {
     }
   }, [user?.id]);
 
-  // Cargar datos iniciales solo una vez cuando todo esté listo
   useEffect(() => {
-    // Esperar a que el auth termine de cargar
     if (authIsLoading) return;
     if (!user) {
       initialLoadDoneRef.current = false;
       return;
     }
-    
-    // Esperar a que employee esté cargado (puede ser null si hay error, pero debe estar resuelto)
-    // IMPORTANTE: employee puede ser null (error de carga), pero undefined significa que aún está cargando
+
     if (employee === undefined) return;
-    
-    // Solo cargar una vez
+
     if (initialLoadDoneRef.current) return;
-    
+
     initialLoadDoneRef.current = true;
-    console.log('[HOME] Loading initial data. Employee:', employee?.fullName ?? 'null', 'Sites:', employeeSites?.length ?? 0);
-    
-    // Cargar asistencia siempre, incluso si employee es null
+    console.log(
+      "[HOME] Loading initial data. Employee:",
+      employee?.fullName ?? "null",
+      "Sites:",
+      employeeSites?.length ?? 0,
+    );
+
     void loadTodayAttendance();
-    
-    // Si no hay employee o sedes, no intentar geofence
+
     if (!employee || !employeeSites || employeeSites.length === 0) {
-      console.log('[HOME] No employee or sites, skipping geofence check');
+      console.log("[HOME] No employee or sites, skipping geofence check");
       return;
     }
-    
-    // CRÍTICO: En producción, hacer verificación inmediata del geofence al cargar
-    // No solo depender del realtime watch que puede tardar
-    console.log('[HOME] Initial geofence check on load');
+
+    console.log("[HOME] Initial geofence check on load");
     void refreshGeofence({ force: true });
-    
-    // También iniciar el realtime watch después de un pequeño delay
+
     const timer = setTimeout(() => {
-      // El realtime watch se iniciará en useFocusEffect, pero aquí podemos asegurar
-      // que el geofence esté verificado primero
     }, 300);
     return () => clearTimeout(timer);
-  }, [user, authIsLoading, employee, employeeSites]); // Sin dependencias de funciones
+  }, [user, authIsLoading, employee, employeeSites]);
 
-  // Actualizar geofence cuando cambia el estado de asistencia (solo si realmente cambió)
   useEffect(() => {
     if (!user || !initialLoadDoneRef.current) return;
-    
+
     const currentStatus = attendanceState.status;
-    // Solo actualizar si el status realmente cambió
     if (lastStatusRef.current === currentStatus) return;
     lastStatusRef.current = currentStatus;
-    
-    // Solo actualizar si el status cambió a algo diferente de not_checked_in inicial
-    if (currentStatus === "not_checked_in" && !attendanceState.lastCheckIn) return;
-    
+
+    if (currentStatus === "not_checked_in" && !attendanceState.lastCheckIn)
+      return;
+
     const timer = setTimeout(() => {
       void refreshGeofence({ force: true });
     }, 500);
     return () => clearTimeout(timer);
-  }, [attendanceState.status, user]); // Solo depende del status, no de funciones
+  }, [attendanceState.status, user]);
 
-  // Recargar tiempo trabajado cada minuto cuando hay check-in activo
   useEffect(() => {
     if (!isCheckedIn || !user) return;
-    
-    // Recargar cada minuto
+
     const interval = setInterval(() => {
       void loadTodayAttendance();
-    }, 60000); // Cada 60 segundos
-    
-    return () => clearInterval(interval);
-  }, [isCheckedIn, user]); // Sin dependencia de función
+    }, 60000);
 
-  // Timeout de seguridad: si se queda en "checking" más de 15 segundos, mostrar mensaje
+    return () => clearInterval(interval);
+  }, [isCheckedIn, user]);
+
   const [stuckTimeout, setStuckTimeout] = useState(false);
-  
+
   useEffect(() => {
     if (geofenceState.status !== "checking") {
       setStuckTimeout(false);
       return;
     }
     if (!geofenceState.updatedAt) return;
-    
+
     const timeSinceUpdate = Date.now() - geofenceState.updatedAt;
     if (timeSinceUpdate > 15000 && !stuckTimeout) {
-      // Si lleva más de 15 segundos en "checking", marcar como timeout
-      console.warn('[HOME] Geofence stuck in checking state for too long');
+      console.warn("[HOME] Geofence stuck in checking state for too long");
       setStuckTimeout(true);
     }
   }, [geofenceState.status, geofenceState.updatedAt, stuckTimeout]);
 
-  // Ref para evitar múltiples inicios de realtime geofence
   const realtimeStartedRef = useRef(false);
   const initialGeofenceCheckedRef = useRef(false);
-  
+
   useFocusEffect(
     useCallback(() => {
       if (!user || realtimeStartedRef.current) return;
       realtimeStartedRef.current = true;
-      
-      // CRÍTICO: En producción, hacer una verificación inicial inmediata del geofence
-      // antes de iniciar el realtime watch, para asegurar que esté listo
-      if (!initialGeofenceCheckedRef.current && employeeSites && employeeSites.length > 0) {
+
+      if (
+        !initialGeofenceCheckedRef.current &&
+        employeeSites &&
+        employeeSites.length > 0
+      ) {
         initialGeofenceCheckedRef.current = true;
-        console.log('[HOME] Initial geofence check on focus');
+        console.log("[HOME] Initial geofence check on focus");
         void refreshGeofence({ force: true });
       }
-      
+
       void startRealtimeGeofence();
       return () => {
         realtimeStartedRef.current = false;
         stopRealtimeGeofence();
       };
-    }, [user, employeeSites]), // Incluir employeeSites para verificar cuando esté disponible
+    }, [user, employeeSites]),
   );
 
   useEffect(() => {
@@ -340,57 +306,42 @@ export default function HomeScreen() {
             : PALETTE.neutral,
     };
   }, [geofenceState.status]);
-  // Calcular tiempo en tiempo real cuando hay check-in activo
   const [currentTime, setCurrentTime] = useState(Date.now());
 
   useEffect(() => {
-    if (isCheckedIn && attendanceState.lastCheckIn) {
-      // Actualizar cada segundo cuando hay check-in activo
+    if (isCheckedIn && attendanceState.openStartAt) {
       const interval = setInterval(() => {
         setCurrentTime(Date.now());
       }, 1000);
       return () => clearInterval(interval);
     }
-  }, [isCheckedIn, attendanceState.lastCheckIn]);
+  }, [isCheckedIn, attendanceState.openStartAt]);
 
-  // Calcular tiempo total trabajado hoy en tiempo real
   const calculateTodayMinutes = useMemo(() => {
-    if (!isCheckedIn || !attendanceState.lastCheckIn) {
-      // Si no hay check-in activo, usar el valor calculado
-      return Math.round(attendanceState.todayHours * 60);
+    const baseMinutes = attendanceState.todayMinutes ?? 0;
+    if (!isCheckedIn || !attendanceState.openStartAt) {
+      return Math.max(0, Math.round(baseMinutes));
     }
 
-    // Si hay check-in activo, calcular tiempo desde el último check-in hasta ahora
-    const checkInTime = new Date(attendanceState.lastCheckIn).getTime();
+    const openStart = new Date(attendanceState.openStartAt).getTime();
     const now = currentTime;
-    const minutesFromActiveCheckIn = (now - checkInTime) / 60000;
-    
-    // todayHours se actualiza cada minuto con la recarga automática
-    // Incluye períodos cerrados + tiempo del check-in activo cuando se calculó
-    const baseMinutes = Math.round(attendanceState.todayHours * 60);
-    
-    // Si el tiempo actual es mayor o igual al base, usar el tiempo actual
-    // (el base es solo del check-in activo o se desactualizó)
-    if (minutesFromActiveCheckIn >= baseMinutes) {
-      return Math.max(0, minutesFromActiveCheckIn);
-    }
-    
-    // Si el base es mayor, probablemente hay períodos cerrados
-    // Pero no sabemos cuánto tiempo llevaba el check-in activo cuando se calculó
-    // Para simplificar, usamos el tiempo actual del check-in activo
-    // La recarga automática cada minuto mantendrá el tiempo base actualizado
-    // y eventualmente se sincronizará con períodos cerrados
-    return Math.max(0, minutesFromActiveCheckIn);
-  }, [attendanceState.todayHours, attendanceState.lastCheckIn, currentTime, isCheckedIn]);
+    const minutesFromOpen = (now - openStart) / 60000;
 
-  const hours = Math.floor(calculateTodayMinutes / 60);
-  const minutes = Math.floor(calculateTodayMinutes % 60);
-  const seconds = Math.floor((calculateTodayMinutes % 1) * 60);
-  
-  // Formato mejorado: HH:MM:SS cuando hay check-in activo, HH:MM cuando no
-  const hoursLabel = isCheckedIn
-    ? `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
-    : `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
+    return Math.max(0, Math.round(baseMinutes + Math.max(0, minutesFromOpen)));
+  }, [
+    attendanceState.todayMinutes,
+    attendanceState.openStartAt,
+    currentTime,
+    isCheckedIn,
+  ]);
+
+  const totalMinutes = Math.max(0, calculateTodayMinutes);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = Math.floor(totalMinutes % 60);
+  const hoursLabel =
+    hours > 0
+      ? `${hours}h ${minutes.toString().padStart(2, "0")}m`
+      : `${minutes} min`;
 
   const lastCheckIn = formatClock(attendanceState.lastCheckIn);
   const lastCheckOut = formatClock(attendanceState.lastCheckOut);
@@ -424,45 +375,52 @@ export default function HomeScreen() {
       return;
     }
 
-    // CRÍTICO: En producción, el geofence puede estar en "idle" y nunca haberse verificado
-    // Si está en "idle" o no está listo, forzar una verificación inmediata
     let geo = geofenceState;
-    const needsVerification = geo.status === "idle" || geo.status === "checking" || !geo.canProceed;
-    
+    const needsVerification =
+      geo.status === "idle" || geo.status === "checking" || !geo.canProceed;
+
     if (needsVerification) {
-      console.log('[HOME] Geofence not ready, forcing immediate verification...', {
-        status: geo.status,
-        canProceed: geo.canProceed,
-        siteId: geo.siteId
-      });
-      
-      // Forzar verificación inmediata
+      console.log(
+        "[HOME] Geofence not ready, forcing immediate verification...",
+        {
+          status: geo.status,
+          canProceed: geo.canProceed,
+          siteId: geo.siteId,
+        },
+      );
+
       geo = await refreshGeofence({ force: true });
-      
-      // Si aún está "checking" o "idle", esperar hasta que esté listo (máximo 8 segundos)
+
       const maxWait = 8000;
       const startTime = Date.now();
       let attempts = 0;
       const maxAttempts = 6;
-      
-      while ((geo.status === "checking" || geo.status === "idle" || !geo.canProceed) && 
-             (Date.now() - startTime) < maxWait && 
-             attempts < maxAttempts &&
-             geo.status !== "blocked" && 
-             geo.status !== "error") {
-        console.log(`[HOME] Waiting for geofence (${geo.status})... (attempt ${attempts + 1}/${maxAttempts})`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
+
+      while (
+        (geo.status === "checking" ||
+          geo.status === "idle" ||
+          !geo.canProceed) &&
+        Date.now() - startTime < maxWait &&
+        attempts < maxAttempts &&
+        geo.status !== "blocked" &&
+        geo.status !== "error"
+      ) {
+        console.log(
+          `[HOME] Waiting for geofence (${geo.status})... (attempt ${attempts + 1}/${maxAttempts})`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 1000));
         geo = await refreshGeofence({ force: true });
         attempts++;
-        
+
         if (geo.canProceed && geo.status === "ready") break;
       }
     }
 
     if (!geo.canProceed) {
-      const msg = geo.status === "idle" 
-        ? "La verificación de ubicación no se ha completado. Intenta de nuevo."
-        : (geo.message || "Ubicación no verificada");
+      const msg =
+        geo.status === "idle"
+          ? "La verificación de ubicación no se ha completado. Intenta de nuevo."
+          : geo.message || "Ubicación no verificada";
       setActionError(msg);
       Alert.alert("No se puede registrar", msg);
       return;
@@ -746,7 +704,7 @@ export default function HomeScreen() {
       left: 0,
       right: 0,
       height: 12,
-      backgroundColor: RGBA.cardTint, // rose glow tint
+      backgroundColor: RGBA.cardTint,
       borderTopLeftRadius: 22,
       borderTopRightRadius: 22,
     },
@@ -770,7 +728,7 @@ export default function HomeScreen() {
       borderRadius: 12,
       borderWidth: 1,
       borderColor: RGBA.borderPink,
-      backgroundColor: "rgba(242, 238, 242, 0.70)", // porcelain2 @ 70%
+      backgroundColor: "rgba(242, 238, 242, 0.70)",
     },
     ctaBase: {
       borderRadius: 22,
@@ -850,9 +808,15 @@ export default function HomeScreen() {
       },
     },
   } as const;
+  const markedDates = getMarkedDates();
+  const handleCalendarMonthChange = (month: DateData) => {
+    const next = new Date(month.year, month.month - 1, 1);
+    next.setHours(0, 0, 0, 0);
+    setCalendarMonth(next);
+  };
   return (
     <View style={{ flex: 1, backgroundColor: PALETTE.porcelain }}>
-      {/* Hero wash (premium, súper sutil) */}
+      
       <View
         pointerEvents="none"
         style={{
@@ -877,412 +841,49 @@ export default function HomeScreen() {
           backgroundColor: RGBA.washRoseGlow,
         }}
       />
-      {/* User menu */}
-      <Modal
-        transparent
+      <UserMenuModal
         visible={isUserMenuOpen}
-        animationType="fade"
-        onRequestClose={() => setIsUserMenuOpen(false)}
-      >
-        <Pressable
-          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.10)" }}
-          onPress={() => setIsUserMenuOpen(false)}
-        >
-          <Pressable
-            onPress={(event) => event.stopPropagation()}
-            style={{
-              position: "absolute",
-              top: topPadding + 44,
-              right: 20,
-              backgroundColor: "white",
-              borderRadius: 16,
-              borderWidth: 1,
-              borderColor: COLORS.border,
-              overflow: "hidden",
-              shadowColor: "#000",
-              shadowOpacity: 0.1,
-              shadowRadius: 16,
-              shadowOffset: { width: 0, height: 10 },
-              elevation: 8,
-              minWidth: 220,
-            }}
-          >
-            <TouchableOpacity
-              onPress={() => {
-                setIsUserMenuOpen(false);
-                void handleRefresh();
-              }}
-              style={{ paddingVertical: 12, paddingHorizontal: 16 }}
-            >
-              <Text
-                style={{ fontSize: 14, fontWeight: "600", color: COLORS.text }}
-              >
-                Actualizar
-              </Text>
-              <Text
-                style={{ fontSize: 12, color: COLORS.neutral, marginTop: 2 }}
-              >
-                Recargar estado de hoy
-              </Text>
-            </TouchableOpacity>
+        topPadding={topPadding}
+        onClose={() => setIsUserMenuOpen(false)}
+        onRefresh={() => {
+          setIsUserMenuOpen(false);
+          void handleRefresh();
+        }}
+        onProfile={() => {
+          setIsUserMenuOpen(false);
+          handleSoon("Mi perfil");
+        }}
+        onSignOut={handleSignOut}
+      />
 
-            <View style={{ height: 1, backgroundColor: COLORS.border }} />
-
-            <TouchableOpacity
-              onPress={() => {
-                setIsUserMenuOpen(false);
-                handleSoon("Mi perfil");
-              }}
-              style={{ paddingVertical: 12, paddingHorizontal: 16 }}
-            >
-              <Text
-                style={{ fontSize: 14, fontWeight: "600", color: COLORS.text }}
-              >
-                Mi perfil
-              </Text>
-              <Text
-                style={{ fontSize: 12, color: COLORS.neutral, marginTop: 2 }}
-              >
-                Datos y preferencias
-              </Text>
-            </TouchableOpacity>
-
-            <View style={{ height: 1, backgroundColor: COLORS.border }} />
-
-            <TouchableOpacity
-              onPress={handleSignOut}
-              style={{ paddingVertical: 12, paddingHorizontal: 16 }}
-            >
-              <Text
-                style={{ fontSize: 14, fontWeight: "700", color: COLORS.text }}
-              >
-                Cerrar sesión
-              </Text>
-              <Text
-                style={{ fontSize: 12, color: COLORS.neutral, marginTop: 2 }}
-              >
-                Salir de ANIMA
-              </Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* Site picker */}
-      <Modal
-        transparent
+      <SitePickerModal
         visible={isSitePickerOpen}
-        animationType="fade"
-        onRequestClose={() => setIsSitePickerOpen(false)}
-      >
-        <Pressable
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.35)",
-            padding: 20,
-            justifyContent: "center",
-          }}
-          onPress={() => setIsSitePickerOpen(false)}
-        >
-          <Pressable
-            onPress={(event) => event.stopPropagation()}
-            style={{
-              backgroundColor: "white",
-              borderRadius: 20,
-              padding: 18,
-              width: modalWidth,
-              borderWidth: 1,
-              borderColor: COLORS.border,
-              shadowColor: "#000",
-              shadowOpacity: 0.12,
-              shadowRadius: 20,
-              shadowOffset: { width: 0, height: 12 },
-              elevation: 10,
-            }}
-          >
-            <Text
-              style={{ fontSize: 16, fontWeight: "800", color: COLORS.text }}
-            >
-              Selecciona tu sede
-            </Text>
-            <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 6 }}>
-              Estas cerca de varias sedes. Elige la correcta para continuar.
-            </Text>
+        modalWidth={modalWidth}
+        candidateSites={candidateSites}
+        onClose={() => setIsSitePickerOpen(false)}
+        onSelectSite={handleSelectSite}
+      />
 
-            <View style={{ marginTop: 12, gap: 10 }}>
-              {candidateSites.length === 0 ? (
-                <Text style={{ fontSize: 12, color: COLORS.neutral }}>
-                  No hay sedes disponibles para seleccionar.
-                </Text>
-              ) : (
-                candidateSites.map((site) => (
-                  <TouchableOpacity
-                    key={site.id}
-                    onPress={() => handleSelectSite(site.id)}
-                    style={{
-                      paddingVertical: 12,
-                      paddingHorizontal: 12,
-                      borderRadius: 14,
-                      borderWidth: 1,
-                      borderColor: COLORS.border,
-                      backgroundColor: COLORS.porcelain,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "800",
-                        color: COLORS.text,
-                      }}
-                    >
-                      {site.name}
-                    </Text>
-                    <Text
-                      style={{
-                        fontSize: 12,
-                        color: COLORS.neutral,
-                        marginTop: 4,
-                      }}
-                    >
-                      {site.distanceMeters}m - radio{" "}
-                      {site.effectiveRadiusMeters}m
-                    </Text>
-                  </TouchableOpacity>
-                ))
-              )}
-            </View>
-
-            <TouchableOpacity
-              onPress={() => setIsSitePickerOpen(false)}
-              style={{
-                alignSelf: "flex-end",
-                marginTop: 14,
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                borderRadius: 12,
-                backgroundColor: COLORS.accent,
-              }}
-            >
-              <Text style={{ fontSize: 12, fontWeight: "800", color: "white" }}>
-                Cancelar
-              </Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* Date range picker */}
-      <Modal
-        transparent
+      <DateRangeModal
         visible={isDateModalOpen}
-        animationType="fade"
-        onRequestClose={() => setIsDateModalOpen(false)}
-      >
-        <Pressable
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.35)",
-            padding: 20,
-            justifyContent: "center",
-          }}
-          onPress={() => setIsDateModalOpen(false)}
-        >
-          <Pressable
-            onPress={(event) => event.stopPropagation()}
-            style={{
-              backgroundColor: "white",
-              borderRadius: 20,
-              padding: 18,
-              borderWidth: 1,
-              borderColor: COLORS.border,
-              shadowColor: "#000",
-              shadowOpacity: 0.12,
-              shadowRadius: 20,
-              shadowOffset: { width: 0, height: 12 },
-              elevation: 10,
-              width: modalWidth,
-              alignSelf: "center",
-            }}
-          >
-            <Text
-              style={{ fontSize: 16, fontWeight: "800", color: COLORS.text }}
-            >
-              Rango del reporte
-            </Text>
-            <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 6 }}>
-              Selecciona un rango exacto desde el calendario.
-            </Text>
+        modalWidth={modalWidth}
+        calendarTheme={calendarTheme}
+        calendarMonth={calendarMonth}
+        markedDates={markedDates}
+        draftStartDate={draftStartDate}
+        draftEndDate={draftEndDate}
+        surfaceStyle={UI.surface2}
+        onClose={() => setIsDateModalOpen(false)}
+        onApply={applyDraftRange}
+        onSelectDay={handleSelectRangeDay}
+        onMonthChange={handleCalendarMonthChange}
+        shiftCalendarMonth={shiftCalendarMonth}
+        toDateKey={toDateKey}
+        formatShortDate={formatShortDate}
+        formatMonthLabel={formatMonthLabel}
+      />
 
-            <View style={{ marginTop: 16 }}>
-              <View style={{ flexDirection: "row", gap: 12 }}>
-                <View style={{ flex: 1, ...UI.surface2, padding: 12 }}>
-                  <Text style={{ fontSize: 12, color: COLORS.neutral }}>
-                    Inicio
-                  </Text>
-                  <Text
-                    style={{
-                      fontSize: 14,
-                      fontWeight: "700",
-                      color: COLORS.text,
-                      marginTop: 4,
-                    }}
-                  >
-                    {draftStartDate
-                      ? formatShortDate(draftStartDate)
-                      : "Selecciona"}
-                  </Text>
-                </View>
-                <View style={{ flex: 1, ...UI.surface2, padding: 12 }}>
-                  <Text style={{ fontSize: 12, color: COLORS.neutral }}>
-                    Fin
-                  </Text>
-                  <Text
-                    style={{
-                      fontSize: 14,
-                      fontWeight: "700",
-                      color: COLORS.text,
-                      marginTop: 4,
-                    }}
-                  >
-                    {draftEndDate
-                      ? formatShortDate(draftEndDate)
-                      : "Selecciona"}
-                  </Text>
-                </View>
-              </View>
-
-              <View
-                style={{
-                  marginTop: 12,
-                  borderRadius: 16,
-                  overflow: "hidden",
-                  borderWidth: 1,
-                  borderColor: COLORS.border,
-                }}
-              >
-                <Calendar
-                  key={toDateKey(calendarMonth)}
-                  current={toDateKey(calendarMonth)}
-                  enableSwipeMonths
-                  hideArrows
-                  hideExtraDays
-                  onDayPress={(day) => handleSelectRangeDay(day.dateString)}
-                  onMonthChange={(month) => {
-                    const next = new Date(month.year, month.month - 1, 1);
-                    next.setHours(0, 0, 0, 0);
-                    setCalendarMonth(next);
-                  }}
-                  markedDates={getMarkedDates()}
-                  markingType="custom"
-                  renderHeader={() => (
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        paddingHorizontal: 8,
-                        paddingVertical: 6,
-                      }}
-                    >
-                      <TouchableOpacity
-                        onPress={() => shiftCalendarMonth(-1)}
-                        style={{
-                          width: 34,
-                          height: 34,
-                          borderRadius: 12,
-                          borderWidth: 1,
-                          borderColor: PALETTE.border,
-                          alignItems: "center",
-                          justifyContent: "center",
-                          backgroundColor: PALETTE.porcelain2,
-                        }}
-                      >
-                        <Ionicons
-                          name="chevron-back"
-                          size={16}
-                          color={PALETTE.text}
-                        />
-                      </TouchableOpacity>
-                      <Text
-                        style={{
-                          fontSize: 16,
-                          fontWeight: "700",
-                          color: PALETTE.text,
-                          letterSpacing: 0.2,
-                        }}
-                      >
-                        {formatMonthLabel(calendarMonth)}
-                      </Text>
-                      <TouchableOpacity
-                        onPress={() => shiftCalendarMonth(1)}
-                        style={{
-                          width: 34,
-                          height: 34,
-                          borderRadius: 12,
-                          borderWidth: 1,
-                          borderColor: PALETTE.border,
-                          alignItems: "center",
-                          justifyContent: "center",
-                          backgroundColor: PALETTE.porcelain2,
-                        }}
-                      >
-                        <Ionicons
-                          name="chevron-forward"
-                          size={16}
-                          color={PALETTE.text}
-                        />
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                  style={{ width: "100%" }}
-                  theme={calendarTheme as unknown as Record<string, unknown>}
-                />
-              </View>
-            </View>
-
-            <View
-              style={{
-                flexDirection: "row",
-                gap: 12,
-                justifyContent: "flex-end",
-                marginTop: 16,
-              }}
-            >
-              <TouchableOpacity
-                onPress={() => setIsDateModalOpen(false)}
-                style={{ ...UI.btnGhostPink }}
-              >
-                <Text
-                  style={{
-                    fontSize: 12,
-                    fontWeight: "700",
-                    color: PALETTE.accent,
-                  }}
-                >
-                  Cancelar
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={applyDraftRange}
-                style={{
-                  paddingVertical: 10,
-                  paddingHorizontal: 16,
-                  borderRadius: 12,
-                  backgroundColor: PALETTE.accent,
-                }}
-              >
-                <Text
-                  style={{ fontSize: 12, fontWeight: "800", color: "white" }}
-                >
-                  Aplicar
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* Header */}
+      
       <View style={{ paddingHorizontal: 20, paddingTop: topPadding }}>
         <View
           style={{
@@ -1385,7 +986,7 @@ export default function HomeScreen() {
           <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
         }
       >
-        {/* Connectivity / error banners */}
+        
         {isOffline ? (
           <View
             style={{
@@ -1447,7 +1048,7 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        {/* Main day card */}
+        
         <View style={{ ...UI.card, padding: 18 }}>
           <View pointerEvents="none" style={UI.cardTint} />
           <Text style={{ fontSize: 13, color: COLORS.neutral }}>
@@ -1482,13 +1083,20 @@ export default function HomeScreen() {
                 marginBottom: 10,
               }}
             >
-              {isCheckedIn ? "activo" : "horas"}
+              {isCheckedIn ? "en curso" : "hoy"}
             </Text>
           </View>
 
           <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 6 }}>
             {statusUI.hint}
           </Text>
+          {attendanceState.lastCheckOutSource === "system" &&
+          attendanceState.lastCheckOut ? (
+            <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
+              Turno cerrado automáticamente a las{" "}
+              {formatClock(attendanceState.lastCheckOut)}.
+            </Text>
+          ) : null}
 
           <View
             style={{
@@ -1547,7 +1155,7 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Primary action */}
+        
         <View style={{ marginTop: 18 }}>
           <View style={{ ...UI.card, padding: 16, marginBottom: 12 }}>
             <View pointerEvents="none" style={UI.cardTint} />
@@ -1698,7 +1306,7 @@ export default function HomeScreen() {
               }}
             >
               {isOffline
-                ? "Sin conexión: no podras registrar asistencia."
+                ? "Sin conexión: no podrás registrar asistencia."
                 : geofenceState.status === "ready"
                   ? "Ubicación verificada. Ya tienes permiso para registrar."
                   : geofenceState.message ||
@@ -1888,7 +1496,7 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        {/* Quick actions */}
+        
         <View style={{ marginTop: 20 }}>
           <Text
             style={{

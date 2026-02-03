@@ -2,9 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   Platform,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -15,7 +13,6 @@ import {
   Linking,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import DateTimePicker from "@react-native-community/datetimepicker";
 import * as DocumentPicker from "expo-document-picker";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
@@ -28,6 +25,12 @@ import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
+import { DocumentCard } from "@/components/documents/DocumentCard";
+import { DocumentsEmptyState } from "@/components/documents/DocumentsEmptyState";
+import { UploadDocumentModal } from "@/components/documents/UploadDocumentModal";
+import { DocumentPickerModal } from "@/components/documents/DocumentPickerModal";
+import { DOCUMENTS_UI } from "@/components/documents/ui";
+
 
 type DocumentScope = "employee" | "site" | "group";
 type DocumentStatus = "pending_review" | "approved" | "rejected";
@@ -90,31 +93,7 @@ Notifications.setNotificationHandler({
   }),
 });
 
-const UI = {
-  card: {
-    backgroundColor: "white",
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    shadowColor: COLORS.text,
-    shadowOpacity: 0.06,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 4,
-  },
-  chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  pill: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-} as const;
+const UI = DOCUMENTS_UI;
 
 function addMonthsSafe(date: Date, months: number) {
   const base = new Date(date)
@@ -975,7 +954,7 @@ export default function DocumentsScreen() {
               console.log('[DOCUMENTS] Reloading documents list...');
               await loadDocuments();
               
-              // Verificar que el documento ya no esté en la lista
+              // Verificar que el documento ya no está en la lista
               console.log('[DOCUMENTS] Document deletion completed');
               
               Alert.alert("Documento", "Documento eliminado correctamente.");
@@ -1166,74 +1145,7 @@ export default function DocumentsScreen() {
 
         {documents.length === 0 && !isLoading ? (
           <View style={{ marginTop: 18 }}>
-            <View style={[UI.card, { padding: 18, alignItems: "center" }]}>
-              <View
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 14,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  backgroundColor: "rgba(226, 0, 106, 0.10)",
-                  borderWidth: 1,
-                  borderColor: "rgba(226, 0, 106, 0.18)",
-                }}
-              >
-                <Ionicons
-                  name="document-text-outline"
-                  size={22}
-                  color={COLORS.accent}
-                />
-              </View>
-
-              <Text
-                style={{
-                  marginTop: 10,
-                  fontSize: 14,
-                  fontWeight: "800",
-                  color: COLORS.text,
-                }}
-              >
-                Sin documentos
-              </Text>
-              <Text
-                style={{
-                  marginTop: 6,
-                  color: COLORS.neutral,
-                  textAlign: "center",
-                }}
-              >
-                Aún no hay documentos cargados.
-              </Text>
-
-              {canManageScopes ? (
-                <TouchableOpacity
-                  onPress={openUpload}
-                  style={[
-                    UI.chip,
-                    {
-                      marginTop: 12,
-                      borderColor: COLORS.accent,
-                      backgroundColor: "rgba(226, 0, 106, 0.12)",
-                      paddingVertical: 10,
-                      paddingHorizontal: 14,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 8,
-                    },
-                  ]}
-                >
-                  <Ionicons
-                    name="cloud-upload-outline"
-                    size={16}
-                    color={COLORS.accent}
-                  />
-                  <Text style={{ fontWeight: "800", color: COLORS.accent }}>
-                    Subir documento
-                  </Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
+            <DocumentsEmptyState canManageScopes={canManageScopes} onUpload={openUpload} />
           </View>
         ) : null}
 
@@ -1259,871 +1171,93 @@ export default function DocumentsScreen() {
               }
             }
             return (
-              <View key={doc.id} style={[UI.card, { padding: 14 }]}>
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      flex: 1,
-                      gap: 10,
-                    }}
-                  >
-                    <View
-                      style={{
-                        width: 40,
-                        height: 40,
-                        borderRadius: 14,
-                        alignItems: "center",
-                        justifyContent: "center",
-                        backgroundColor: "rgba(226, 0, 106, 0.10)",
-                        borderWidth: 1,
-                        borderColor: "rgba(226, 0, 106, 0.18)",
-                      }}
-                    >
-                      <Ionicons
-                        name="document-text-outline"
-                        size={20}
-                        color={COLORS.accent}
-                      />
-                    </View>
-
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.docTitle} numberOfLines={1}>
-                        {doc.document_type?.name ?? doc.title}
-                      </Text>
-                      <Text style={styles.docMeta} numberOfLines={1}>
-                        {doc.file_name}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-
-                <View style={{ flexDirection: "row", marginTop: 10 }}>
-                  <Text style={styles.docMeta}>
-                    {formatShortDate(doc.expiry_date)}
-                  </Text>
-                  <Text style={[styles.docMeta, { marginLeft: 12 }]}>
-                    {doc.scope === "employee"
-                      ? "Personal"
-                      : doc.scope === "site"
-                        ? "Sede"
-                        : "Grupo"}
-                  </Text>
-                </View>
-                {expiryLabel ? (
-                  <Text style={[styles.docMeta, { color: expiryTone }]}>
-                    {expiryLabel}
-                  </Text>
-                ) : null}
-
-                <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-                  <TouchableOpacity
-                    onPress={() => openDocument(doc)}
-                    style={[
-                      UI.chip,
-                      {
-                        flex: 1,
-                        borderColor: COLORS.accent,
-                        backgroundColor: "rgba(226, 0, 106, 0.10)",
-                        flexDirection: "row",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 8,
-                        paddingVertical: 10,
-                      },
-                    ]}
-                  >
-                    <Ionicons
-                      name="open-outline"
-                      size={16}
-                      color={COLORS.accent}
-                    />
-                    <Text
-                      style={{
-                        textAlign: "center",
-                        fontWeight: "800",
-                        color: COLORS.accent,
-                      }}
-                    >
-                      Abrir PDF
-                    </Text>
-                  </TouchableOpacity>
-                  
-                  {canManageScopes ? (
-                    <TouchableOpacity
-                      onPress={() => handleDeleteDocument(doc)}
-                      style={[
-                        UI.chip,
-                        {
-                          borderColor: COLORS.neutral,
-                          backgroundColor: COLORS.porcelainAlt,
-                          flexDirection: "row",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: 8,
-                          paddingVertical: 10,
-                          paddingHorizontal: 16,
-                        },
-                      ]}
-                    >
-                      <Ionicons
-                        name="trash-outline"
-                        size={16}
-                        color={COLORS.neutral}
-                      />
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-              </View>
+              <DocumentCard
+                key={doc.id}
+                title={doc.document_type?.name ?? doc.title}
+                fileName={doc.file_name}
+                expiryDateLabel={formatShortDate(doc.expiry_date)}
+                scopeLabel={
+                  doc.scope === "employee" ? "Personal" : doc.scope === "site" ? "Sede" : "Grupo"
+                }
+                expiryLabel={expiryLabel}
+                expiryTone={expiryTone}
+                onOpen={() => openDocument(doc)}
+                showDelete={canManageScopes}
+                onDelete={() => handleDeleteDocument(doc)}
+              />
             );
           })}
         </View>
       </ScrollView>
 
-      <Modal
-        transparent
+      <UploadDocumentModal
         visible={isUploadOpen}
-        animationType="fade"
-        presentationStyle="overFullScreen"
-        onRequestClose={closeUploadModal}
-      >
-        <View style={styles.modalOverlay}>
-          <Pressable
-            style={StyleSheet.absoluteFillObject}
-            onPress={closeUploadModal}
-          />
-          <ScrollView
-            contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 20 }}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Subir documento</Text>
-            <Text style={styles.modalSubtitle}>
-              Solo PDF. Selecciona el tipo y agrega fechas si aplica.
-            </Text>
+        insets={insets}
+        styles={styles}
+        onClose={closeUploadModal}
+        onSave={handleSaveDocument}
+        isSaving={isSaving}
+        scope={scope}
+        setScope={setScope}
+        canManageScopes={canManageScopes}
+        availableEmployees={availableEmployees}
+        loadAvailableEmployees={loadAvailableEmployees}
+        selectedEmployee={selectedEmployee}
+        selectedEmployeeId={selectedEmployeeId}
+        setSelectedEmployeeId={setSelectedEmployeeId}
+        documentTypes={documentTypes}
+        loadDocumentTypes={loadDocumentTypes}
+        selectedType={selectedType}
+        selectedTypeId={selectedTypeId}
+        setSelectedTypeId={setSelectedTypeId}
+        selectedFile={selectedFile}
+        pickDocument={pickDocument}
+        description={description}
+        setDescription={setDescription}
+        customTitle={customTitle}
+        setCustomTitle={setCustomTitle}
+        activeSiteId={activeSiteId}
+        sites={sites}
+        setSiteId={setSiteId}
+        issueDate={issueDate}
+        setIssueDate={setIssueDate}
+        expiryDate={expiryDate}
+        setExpiryDate={setExpiryDate}
+        showIssuePicker={showIssuePicker}
+        setShowIssuePicker={setShowIssuePicker}
+        showExpiryPicker={showExpiryPicker}
+        setShowExpiryPicker={setShowExpiryPicker}
+        tempIssueDate={tempIssueDate}
+        setTempIssueDate={setTempIssueDate}
+        tempExpiryDate={tempExpiryDate}
+        setTempExpiryDate={setTempExpiryDate}
+        isExpiryManual={isExpiryManual}
+        setIsExpiryManual={setIsExpiryManual}
+        activePicker={activePicker}
+        setActivePicker={setActivePicker}
+        pickerQuery={pickerQuery}
+        setPickerQuery={setPickerQuery}
+        filteredTypes={filteredTypes}
+        filteredEmployees={filteredEmployees}
+        filteredSites={filteredSites}
+        addMonthsSafe={addMonthsSafe}
+        formatDateOnly={formatDateOnly}
+        formatShortDate={formatShortDate}
+      />
 
-            <Text style={styles.modalLabel}>Alcance</Text>
-            <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-              <TouchableOpacity
-                onPress={() => setScope("employee")}
-                style={[
-                  UI.chip,
-                  {
-                    flex: 1,
-                    borderColor:
-                      scope === "employee" ? COLORS.accent : COLORS.border,
-                    backgroundColor:
-                      scope === "employee"
-                        ? "rgba(226, 0, 106, 0.10)"
-                        : "white",
-                  },
-                ]}
-              >
-                <Text
-                  style={{
-                    textAlign: "center",
-                    fontWeight: "700",
-                    color: COLORS.text,
-                  }}
-                >
-                  Personal
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setScope("site")}
-                disabled={!canManageScopes}
-                style={[
-                  UI.chip,
-                  {
-                    flex: 1,
-                    borderColor:
-                      scope === "site" ? COLORS.accent : COLORS.border,
-                    backgroundColor:
-                      scope === "site" ? "rgba(226, 0, 106, 0.10)" : "white",
-                    opacity: canManageScopes ? 1 : 0.4,
-                  },
-                ]}
-              >
-                <Text
-                  style={{
-                    textAlign: "center",
-                    fontWeight: "700",
-                    color: COLORS.text,
-                  }}
-                >
-                  Sede
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {scope === "employee" ? (
-              <>
-                <Text style={styles.modalLabel}>Trabajador</Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    if (availableEmployees.length === 0) {
-                      void loadAvailableEmployees()
-                    }
-                    setPickerQuery("")
-                    setActivePicker("employee")
-                  }}
-                  style={[
-                    UI.chip,
-                    {
-                      borderColor: COLORS.border,
-                      backgroundColor: COLORS.porcelainAlt,
-                      marginTop: 6,
-                    },
-                  ]}
-                >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <Text style={{ fontWeight: "700", color: COLORS.text, flex: 1 }}>
-                      {selectedEmployee ? selectedEmployee.full_name : "Selecciona un trabajador"}
-                    </Text>
-                    <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
-                  </View>
-                </TouchableOpacity>
-
-                <Text style={styles.modalLabel}>Tipo de documento</Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    if (documentTypes.length === 0) {
-                      void loadDocumentTypes()
-                    }
-                    setPickerQuery("")
-                    setActivePicker("type")
-                  }}
-                  style={[
-                    UI.chip,
-                    {
-                      borderColor: COLORS.border,
-                      backgroundColor: COLORS.porcelainAlt,
-                      marginTop: 6,
-                    },
-                  ]}
-                >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <Text style={{ fontWeight: "700", color: COLORS.text, flex: 1 }}>
-                      {selectedType ? selectedType.name : "Selecciona un tipo"}
-                    </Text>
-                    <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
-                  </View>
-                </TouchableOpacity>
-              </>
-            ) : null}
-
-            <Text style={styles.modalLabel}>Documento PDF</Text>
-            <TouchableOpacity
-              onPress={pickDocument}
-              style={[
-                UI.chip,
-                {
-                  borderColor: COLORS.border,
-                  backgroundColor: COLORS.porcelainAlt,
-                  marginTop: 6,
-                },
-              ]}
-            >
-              <Text style={{ fontWeight: "700", color: COLORS.text }}>
-                {selectedFile ? selectedFile.name : "Seleccionar PDF"}
-              </Text>
-            </TouchableOpacity>
-
-            <Text style={styles.modalLabel}>Descripción</Text>
-            <TextInput
-              value={description}
-              onChangeText={setDescription}
-              placeholder="Descripción (opcional)"
-              placeholderTextColor={COLORS.neutral}
-              style={styles.input}
-            />
-
-            {scope === "site" ? (
-              <>
-                <Text style={styles.modalLabel}>Nombre del documento</Text>
-                <TextInput
-                  value={customTitle}
-                  onChangeText={setCustomTitle}
-                  placeholder="Ej: Manual de sede, checklist, etc."
-                  placeholderTextColor={COLORS.neutral}
-                  style={styles.input}
-                />
-
-                <Text style={styles.modalLabel}>Sede</Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    setPickerQuery("")
-                    setActivePicker("site")
-                  }}
-                  style={[
-                    UI.chip,
-                    {
-                      borderColor: COLORS.border,
-                      backgroundColor: COLORS.porcelainAlt,
-                      marginTop: 6,
-                    },
-                  ]}
-                >
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <Text style={{ fontWeight: "700", color: COLORS.text, flex: 1 }}>
-                      {activeSiteId
-                        ? sites.find((site) => site.id === activeSiteId)?.name ??
-                          "Selecciona la sede"
-                        : "Selecciona la sede"}
-                    </Text>
-                    <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
-                  </View>
-                </TouchableOpacity>
-              </>
-            ) : null}
-
-            {selectedType?.requires_expiry ? (
-              <>
-                <Text style={styles.modalLabel}>Fecha de expedición</Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    setTempIssueDate(issueDate ?? new Date());
-                    setShowIssuePicker(true);
-                  }}
-                  style={[
-                    UI.chip,
-                    {
-                      borderColor: COLORS.border,
-                      backgroundColor: COLORS.porcelainAlt,
-                      marginTop: 6,
-                    },
-                  ]}
-                >
-                  <Text style={{ fontWeight: "700", color: COLORS.text }}>
-                    {issueDate
-                      ? formatShortDate(formatDateOnly(issueDate))
-                      : "Seleccionar fecha"}
-                  </Text>
-                </TouchableOpacity>
-
-                {showIssuePicker && Platform.OS === "ios" ? (
-                  <Modal
-                    transparent
-                    visible={showIssuePicker}
-                    animationType="slide"
-                    onRequestClose={() => {
-                      setShowIssuePicker(false);
-                      setTempIssueDate(null);
-                    }}
-                  >
-                    <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}>
-                      <View style={{ backgroundColor: "white", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
-                        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                          <Text style={{ fontSize: 18, fontWeight: "800", color: COLORS.text }}>Fecha de expedición</Text>
-                          <TouchableOpacity
-                            onPress={() => {
-                              setShowIssuePicker(false);
-                              setTempIssueDate(null);
-                            }}
-                            style={{ padding: 8 }}
-                          >
-                            <Ionicons name="close" size={24} color={COLORS.text} />
-                          </TouchableOpacity>
-                        </View>
-                        <DateTimePicker
-                          value={tempIssueDate ?? new Date()}
-                          mode="date"
-                          display="spinner"
-                          onChange={(event, date) => {
-                            if (date) {
-                              setTempIssueDate(date);
-                            }
-                          }}
-                          maximumDate={new Date()}
-                          style={{ height: 200 }}
-                        />
-                        <TouchableOpacity
-                          onPress={() => {
-                            if (tempIssueDate) {
-                              setIssueDate(tempIssueDate);
-                              setIsExpiryManual(false);
-                            }
-                            setShowIssuePicker(false);
-                            setTempIssueDate(null);
-                          }}
-                          style={[
-                            UI.chip,
-                            {
-                              marginTop: 16,
-                              borderColor: COLORS.accent,
-                              backgroundColor: "rgba(226, 0, 106, 0.10)",
-                              paddingVertical: 12,
-                              alignItems: "center",
-                            },
-                          ]}
-                        >
-                          <Text style={{ fontWeight: "800", color: COLORS.accent }}>Confirmar</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  </Modal>
-                ) : showIssuePicker && Platform.OS === "android" ? (
-                  <DateTimePicker
-                    value={issueDate ?? new Date()}
-                    mode="date"
-                    display="default"
-                    onChange={(event, date) => {
-                      setShowIssuePicker(false);
-                      if (date) {
-                        setIssueDate(date);
-                        setIsExpiryManual(false);
-                      }
-                    }}
-                    maximumDate={new Date()}
-                  />
-                ) : null}
-
-                <Text style={styles.modalLabel}>Vencimiento</Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    setIsExpiryManual(true);
-                    const defaultExpiry = issueDate 
-                      ? addMonthsSafe(issueDate, selectedType?.validity_months ?? 3)
-                      : new Date();
-                    setTempExpiryDate(expiryDate ?? defaultExpiry);
-                    setShowExpiryPicker(true);
-                  }}
-                  style={[
-                    UI.chip,
-                    {
-                      borderColor: COLORS.border,
-                      backgroundColor: COLORS.porcelainAlt,
-                      marginTop: 6,
-                    },
-                  ]}
-                >
-                  <Text style={{ fontWeight: "700", color: COLORS.text }}>
-                    {expiryDate
-                      ? formatShortDate(formatDateOnly(expiryDate))
-                      : "Seleccionar fecha"}
-                  </Text>
-                </TouchableOpacity>
-
-                {showExpiryPicker && Platform.OS === "ios" ? (
-                  <Modal
-                    transparent
-                    visible={showExpiryPicker}
-                    animationType="slide"
-                    onRequestClose={() => {
-                      setShowExpiryPicker(false);
-                      setTempExpiryDate(null);
-                    }}
-                  >
-                    <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}>
-                      <View style={{ backgroundColor: "white", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
-                        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                          <Text style={{ fontSize: 18, fontWeight: "800", color: COLORS.text }}>Fecha de vencimiento</Text>
-                          <TouchableOpacity
-                            onPress={() => {
-                              setShowExpiryPicker(false);
-                              setTempExpiryDate(null);
-                            }}
-                            style={{ padding: 8 }}
-                          >
-                            <Ionicons name="close" size={24} color={COLORS.text} />
-                          </TouchableOpacity>
-                        </View>
-                        <DateTimePicker
-                          value={tempExpiryDate ?? (issueDate ? addMonthsSafe(issueDate, selectedType?.validity_months ?? 3) : new Date())}
-                          mode="date"
-                          display="spinner"
-                          onChange={(event, date) => {
-                            if (date) {
-                              setTempExpiryDate(date);
-                            }
-                          }}
-                          minimumDate={issueDate ?? undefined}
-                          style={{ height: 200 }}
-                        />
-                        <TouchableOpacity
-                          onPress={() => {
-                            if (tempExpiryDate) {
-                              setExpiryDate(tempExpiryDate);
-                              setIsExpiryManual(true);
-                            }
-                            setShowExpiryPicker(false);
-                            setTempExpiryDate(null);
-                          }}
-                          style={[
-                            UI.chip,
-                            {
-                              marginTop: 16,
-                              borderColor: COLORS.accent,
-                              backgroundColor: "rgba(226, 0, 106, 0.10)",
-                              paddingVertical: 12,
-                              alignItems: "center",
-                            },
-                          ]}
-                        >
-                          <Text style={{ fontWeight: "800", color: COLORS.accent }}>Confirmar</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  </Modal>
-                ) : showExpiryPicker && Platform.OS === "android" ? (
-                  <DateTimePicker
-                    value={expiryDate ?? (issueDate ? addMonthsSafe(issueDate, selectedType?.validity_months ?? 3) : new Date())}
-                    mode="date"
-                    display="default"
-                    onChange={(event, date) => {
-                      setShowExpiryPicker(false);
-                      if (date) {
-                        setExpiryDate(date);
-                        setIsExpiryManual(true);
-                      }
-                    }}
-                    minimumDate={issueDate ?? undefined}
-                  />
-                ) : null}
-
-                {selectedType?.validity_months ? (
-                  <Text style={styles.modalHint}>
-                    Vigencia sugerida: {selectedType.validity_months} meses.
-                  </Text>
-                ) : null}
-              </>
-            ) : null}
-
-            <View
-              style={{
-                flexDirection: "row",
-                gap: 10,
-                justifyContent: "flex-end",
-                marginTop: 16,
-              }}
-            >
-              <TouchableOpacity
-                onPress={closeUploadModal}
-                style={[
-                  UI.chip,
-                  {
-                    borderColor: COLORS.border,
-                    backgroundColor: COLORS.porcelainAlt,
-                  },
-                ]}
-              >
-                <Text style={{ fontWeight: "700", color: COLORS.text }}>
-                  Cancelar
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleSaveDocument}
-                disabled={isSaving}
-                style={[
-                  UI.chip,
-                  {
-                    borderColor: COLORS.rosegold,
-                    backgroundColor: "rgba(242, 198, 192, 0.25)",
-                    opacity: isSaving ? 0.7 : 1,
-                  },
-                ]}
-              >
-                <Text style={{ fontWeight: "700", color: COLORS.rosegold }}>
-                  {isSaving ? "Guardando..." : "Subir"}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            </View>
-          </ScrollView>
-
-          {activePicker && isUploadOpen ? (
-            <View
-              style={[
-                styles.pickerOverlay,
-                {
-                  paddingTop: Math.max(16, insets.top + 8),
-                  paddingBottom: Math.max(16, insets.bottom + 12),
-                },
-              ]}
-            >
-              <View style={styles.pickerHeader}>
-                <TouchableOpacity
-                  onPress={() => setActivePicker(null)}
-                  style={styles.pickerBack}
-                >
-                  <Ionicons name="arrow-back" size={18} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.pickerTitle}>
-                  {activePicker === "type" 
-                    ? "Tipo de documento" 
-                    : activePicker === "employee"
-                    ? "Trabajador"
-                    : "Sede"}
-                </Text>
-              </View>
-
-              <View style={styles.pickerSearchWrap}>
-                <TextInput
-                  value={pickerQuery}
-                  onChangeText={setPickerQuery}
-                  placeholder={
-                    activePicker === "type"
-                      ? "Buscar tipo..."
-                      : activePicker === "employee"
-                      ? "Buscar trabajador..."
-                      : "Buscar sede..."
-                  }
-                  placeholderTextColor={COLORS.neutral}
-                  style={styles.pickerSearchInput}
-                />
-              </View>
-
-              <ScrollView contentContainerStyle={styles.pickerList}>
-                {activePicker === "type" ? (
-                  filteredTypes.length === 0 ? (
-                    <Text style={styles.modalHint}>
-                      No hay tipos disponibles para este alcance.
-                    </Text>
-                  ) : (
-                    filteredTypes.map((type) => {
-                      const active = selectedTypeId === type.id
-                      return (
-                        <TouchableOpacity
-                          key={type.id}
-                          onPress={() => {
-                            setSelectedTypeId(type.id)
-                            setActivePicker(null)
-                          }}
-                          style={[
-                            styles.pickerItem,
-                            active ? styles.pickerItemActive : null,
-                          ]}
-                        >
-                          <Text style={styles.pickerItemTitle}>{type.name}</Text>
-                          {type.validity_months ? (
-                            <Text style={styles.pickerItemHint}>
-                              Vigencia sugerida: {type.validity_months} meses
-                            </Text>
-                          ) : null}
-                        </TouchableOpacity>
-                      )
-                    })
-                  )
-                ) : activePicker === "employee" ? (
-                  availableEmployees.length === 0 ? (
-                    <View style={{ padding: 20, alignItems: "center" }}>
-                      <ActivityIndicator size="small" color={COLORS.accent} />
-                      <Text style={[styles.modalHint, { marginTop: 12 }]}>
-                        Cargando trabajadores...
-                      </Text>
-                      <TouchableOpacity
-                        onPress={() => {
-                          void loadAvailableEmployees();
-                        }}
-                        style={[
-                          UI.chip,
-                          {
-                            marginTop: 16,
-                            borderColor: COLORS.accent,
-                            backgroundColor: "rgba(226, 0, 106, 0.10)",
-                          },
-                        ]}
-                      >
-                        <Text style={{ fontWeight: "700", color: COLORS.accent }}>
-                          Reintentar
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : filteredEmployees.length === 0 ? (
-                    <Text style={styles.modalHint}>
-                      No se encontraron trabajadores con ese nombre.
-                    </Text>
-                  ) : (
-                    <>
-                      {!isUploadOpen ? (
-                        <TouchableOpacity
-                          onPress={() => {
-                            setFilterEmployeeId(null)
-                            setActivePicker(null)
-                          }}
-                          style={[
-                            styles.pickerItem,
-                            !filterEmployeeId ? styles.pickerItemActive : null,
-                          ]}
-                        >
-                          <Text style={styles.pickerItemTitle}>Todos los trabajadores</Text>
-                        </TouchableOpacity>
-                      ) : null}
-                      {filteredEmployees.map((emp) => {
-                        const active = isUploadOpen 
-                          ? selectedEmployeeId === emp.id
-                          : filterEmployeeId === emp.id
-                        return (
-                          <TouchableOpacity
-                            key={emp.id}
-                            onPress={() => {
-                              if (isUploadOpen) {
-                                setSelectedEmployeeId(emp.id)
-                              } else {
-                                setFilterEmployeeId(emp.id)
-                              }
-                              setActivePicker(null)
-                            }}
-                            style={[
-                              styles.pickerItem,
-                              active ? styles.pickerItemActive : null,
-                            ]}
-                          >
-                            <Text style={styles.pickerItemTitle}>{emp.full_name}</Text>
-                          </TouchableOpacity>
-                        )
-                      })}
-                    </>
-                  )
-                ) : filteredSites.length === 0 ? (
-                  <Text style={styles.modalHint}>
-                    No hay sedes disponibles para seleccionar.
-                  </Text>
-                ) : (
-                  filteredSites.map((site) => {
-                    const active = activeSiteId === site.id
-                    return (
-                      <TouchableOpacity
-                        key={site.id}
-                        onPress={() => {
-                          setSiteId(site.id)
-                          setActivePicker(null)
-                        }}
-                        style={[
-                          styles.pickerItem,
-                          active ? styles.pickerItemActive : null,
-                        ]}
-                      >
-                        <Text style={styles.pickerItemTitle}>{site.name}</Text>
-                      </TouchableOpacity>
-                    )
-                  })
-                )}
-              </ScrollView>
-            </View>
-          ) : null}
-        </View>
-      </Modal>
-
-      {/* Modal separado para el picker cuando se usa fuera del modal de upload */}
-      <Modal
-        transparent
+      <DocumentPickerModal
         visible={activePicker !== null && !isUploadOpen}
-        animationType="slide"
-        presentationStyle="overFullScreen"
-        onRequestClose={() => setActivePicker(null)}
-      >
-        <View
-          style={[
-            styles.pickerOverlay,
-            {
-              paddingTop: Math.max(16, insets.top + 8),
-              paddingBottom: Math.max(16, insets.bottom + 12),
-            },
-          ]}
-        >
-          <View style={styles.pickerHeader}>
-            <TouchableOpacity
-              onPress={() => setActivePicker(null)}
-              style={styles.pickerBack}
-            >
-              <Ionicons name="arrow-back" size={18} color={COLORS.text} />
-            </TouchableOpacity>
-            <Text style={styles.pickerTitle}>
-              {activePicker === "type" 
-                ? "Tipo de documento" 
-                : activePicker === "employee"
-                ? "Trabajador"
-                : "Sede"}
-            </Text>
-          </View>
-
-          <View style={styles.pickerSearchWrap}>
-            <TextInput
-              value={pickerQuery}
-              onChangeText={setPickerQuery}
-              placeholder={
-                activePicker === "type"
-                  ? "Buscar tipo..."
-                  : activePicker === "employee"
-                  ? "Buscar trabajador..."
-                  : "Buscar sede..."
-              }
-              placeholderTextColor={COLORS.neutral}
-              style={styles.pickerSearchInput}
-            />
-          </View>
-
-          <ScrollView contentContainerStyle={styles.pickerList}>
-            {activePicker === "employee" ? (
-              availableEmployees.length === 0 ? (
-                <View style={{ padding: 20, alignItems: "center" }}>
-                  <ActivityIndicator size="small" color={COLORS.accent} />
-                  <Text style={[styles.modalHint, { marginTop: 12 }]}>
-                    Cargando trabajadores...
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      void loadAvailableEmployees();
-                    }}
-                    style={[
-                      UI.chip,
-                      {
-                        marginTop: 16,
-                        borderColor: COLORS.accent,
-                        backgroundColor: "rgba(226, 0, 106, 0.10)",
-                      },
-                    ]}
-                  >
-                    <Text style={{ fontWeight: "700", color: COLORS.accent }}>
-                      Reintentar
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              ) : filteredEmployees.length === 0 ? (
-                <Text style={styles.modalHint}>
-                  No se encontraron trabajadores con ese nombre.
-                </Text>
-              ) : (
-                <>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setFilterEmployeeId(null)
-                      setActivePicker(null)
-                    }}
-                    style={[
-                      styles.pickerItem,
-                      !filterEmployeeId ? styles.pickerItemActive : null,
-                    ]}
-                  >
-                    <Text style={styles.pickerItemTitle}>Todos los trabajadores</Text>
-                  </TouchableOpacity>
-                  {filteredEmployees.map((emp) => {
-                    const active = filterEmployeeId === emp.id
-                    return (
-                      <TouchableOpacity
-                        key={emp.id}
-                        onPress={() => {
-                          setFilterEmployeeId(emp.id)
-                          setActivePicker(null)
-                        }}
-                        style={[
-                          styles.pickerItem,
-                          active ? styles.pickerItemActive : null,
-                        ]}
-                      >
-                        <Text style={styles.pickerItemTitle}>{emp.full_name}</Text>
-                      </TouchableOpacity>
-                    )
-                  })}
-                </>
-              )
-            ) : null}
-          </ScrollView>
-        </View>
-      </Modal>
+        insets={insets}
+        styles={styles}
+        pickerQuery={pickerQuery}
+        setPickerQuery={setPickerQuery}
+        availableEmployees={availableEmployees}
+        filteredEmployees={filteredEmployees}
+        filterEmployeeId={filterEmployeeId}
+        setFilterEmployeeId={setFilterEmployeeId}
+        onClose={() => setActivePicker(null)}
+        onRetryEmployees={loadAvailableEmployees}
+      />
 
     </View>
   );
@@ -2305,6 +1439,13 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
 });
+
+
+
+
+
+
+
 
 
 

@@ -30,11 +30,21 @@ serve(async (req) => {
     })
   }
 
+  const authHeader = req.headers.get("Authorization") ?? ""
+  const accessToken = authHeader.replace("Bearer ", "").trim()
+  if (!accessToken) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    })
+  }
+
   let payload: {
-    token?: string
     password?: string
     full_name?: string | null
     alias?: string | null
+    role?: string | null
+    site_id?: string | null
   } = {}
 
   try {
@@ -46,10 +56,9 @@ serve(async (req) => {
     })
   }
 
-  const token = payload.token?.trim()
   const password = payload.password
 
-  if (!token || !password) {
+  if (!password) {
     return new Response(JSON.stringify({ error: "Missing fields" }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -67,43 +76,66 @@ serve(async (req) => {
     auth: { persistSession: false },
   })
 
-  const { data: invite, error: inviteError } = await supabase
-    .from("staff_invitations")
-    .select(
-      "id, email, full_name, staff_site_id, staff_role, status, expires_at",
-    )
-    .eq("token", token)
-    .maybeSingle()
+  const { data: userData, error: userError } =
+    await supabase.auth.getUser(accessToken)
 
-  if (inviteError || !invite) {
-    return new Response(JSON.stringify({ error: "Invitation not found" }), {
-      status: 404,
+  if (userError || !userData?.user) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
   }
 
-  if (invite.status !== "pending") {
-    return new Response(JSON.stringify({ error: "Invitation already used" }), {
-      status: 409,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
-  }
+  const user = userData.user
+  const meta = (user.user_metadata ?? {}) as Record<string, unknown>
 
-  if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
-    return new Response(JSON.stringify({ error: "Invitation expired" }), {
-      status: 410,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
-  }
+  const role = String(payload.role ?? meta.role ?? "").trim()
+  const siteId = String(payload.site_id ?? meta.site_id ?? "").trim()
 
-  if (!invite.email || !invite.staff_site_id || !invite.staff_role) {
+  if (!role || !siteId) {
     return new Response(JSON.stringify({ error: "Invitation incomplete" }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
   }
 
-  const fullName = (payload.full_name ?? invite.full_name ?? "").trim()
+  const { data: roleRow } = await supabase
+    .from("roles")
+    .select("code, is_active")
+    .eq("code", role)
+    .maybeSingle()
+
+  if (!roleRow || roleRow.is_active === false) {
+    return new Response(JSON.stringify({ error: "Invalid role" }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    })
+  }
+
+  const { data: siteRow } = await supabase
+    .from("sites")
+    .select("id, is_active")
+    .eq("id", siteId)
+    .maybeSingle()
+
+  if (!siteRow || siteRow.is_active === false) {
+    return new Response(JSON.stringify({ error: "Invalid site" }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    })
+  }
+
+  let fullName = String(payload.full_name ?? meta.full_name ?? "").trim()
+  if (!fullName) {
+    if (user.email) {
+      const { data: userProfile } = await supabase
+        .from("users")
+        .select("full_name")
+        .eq("email", user.email)
+        .maybeSingle()
+      fullName = (userProfile?.full_name ?? "").trim()
+    }
+  }
   if (!fullName) {
     return new Response(JSON.stringify({ error: "Missing full name" }), {
       status: 400,
@@ -111,46 +143,66 @@ serve(async (req) => {
     })
   }
 
-  let userId: string | null = null
   const now = new Date().toISOString()
+  const aliasValue = String(
+    payload.alias ?? (typeof meta.alias === "string" ? meta.alias : ""),
+  ).trim()
 
   try {
-    const { data: created, error: createError } =
-      await supabase.auth.admin.createUser({
-        email: invite.email,
-        password,
-        email_confirm: true,
-      })
-
-    if (createError || !created?.user) {
-      return new Response(
-        JSON.stringify({ error: createError?.message ?? "User create failed" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
-      )
+    const mergedMeta = {
+      ...meta,
+      role,
+      site_id: siteId,
+      full_name: fullName,
+      ...(aliasValue ? { alias: aliasValue } : {}),
     }
 
-    userId = created.user.id
+    const { error: updateAuthError } =
+      await supabase.auth.admin.updateUserById(user.id, {
+        password,
+        user_metadata: mergedMeta,
+      })
 
-    const { error: employeeError } = await supabase.from("employees").insert({
-      id: userId,
-      full_name: fullName,
-      alias: payload.alias ?? null,
-      role: invite.staff_role,
-      site_id: invite.staff_site_id,
-      is_active: true,
-      joined_at: now,
-      updated_at: now,
-    })
+    if (updateAuthError) throw updateAuthError
+
+    const { data: existingEmployee } = await supabase
+      .from("employees")
+      .select("id, joined_at, alias")
+      .eq("id", user.id)
+      .maybeSingle()
+
+    const joinedAt = existingEmployee?.joined_at ?? now
+    const finalAlias = aliasValue || existingEmployee?.alias || null
+
+    const { error: employeeError } = await supabase.from("employees").upsert(
+      {
+        id: user.id,
+        full_name: fullName,
+        alias: finalAlias,
+        role,
+        site_id: siteId,
+        is_active: true,
+        joined_at: joinedAt,
+        updated_at: now,
+      },
+      { onConflict: "id" },
+    )
 
     if (employeeError) throw employeeError
 
+    const { error: clearPrimaryError } = await supabase
+      .from("employee_sites")
+      .update({ is_primary: false })
+      .eq("employee_id", user.id)
+      .eq("is_primary", true)
+      .neq("site_id", siteId)
+
+    if (clearPrimaryError) throw clearPrimaryError
+
     const { error: siteError } = await supabase.from("employee_sites").upsert(
       {
-        employee_id: userId,
-        site_id: invite.staff_site_id,
+        employee_id: user.id,
+        site_id: siteId,
         is_primary: true,
         is_active: true,
       },
@@ -158,20 +210,7 @@ serve(async (req) => {
     )
 
     if (siteError) throw siteError
-
-    const { error: updateError } = await supabase
-      .from("staff_invitations")
-      .update({ status: "accepted", accepted_at: now })
-      .eq("id", invite.id)
-
-    if (updateError) throw updateError
   } catch (err) {
-    if (userId) {
-      await supabase.from("employee_sites").delete().eq("employee_id", userId)
-      await supabase.from("employees").delete().eq("id", userId)
-      await supabase.auth.admin.deleteUser(userId)
-    }
-
     const message =
       err instanceof Error ? err.message : "Invitation activation failed"
     return new Response(JSON.stringify({ error: message }), {
@@ -180,15 +219,11 @@ serve(async (req) => {
     })
   }
 
-  if (!userId) {
-    return new Response(JSON.stringify({ error: "User create failed" }), {
-      status: 400,
+  return new Response(
+    JSON.stringify({ user_id: user.id, email: user.email ?? null }),
+    {
+      status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
-  }
-
-  return new Response(JSON.stringify({ user_id: userId, email: invite.email }), {
-    status: 200,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  })
+    },
+  )
 })

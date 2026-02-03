@@ -2,13 +2,10 @@ import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Modal,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -18,52 +15,15 @@ import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
-
-type AttendanceLog = {
-  id: string;
-  action: "check_in" | "check_out";
-  occurred_at: string;
-  site_id: string | null;
-  sites: { name: string | null } | { name: string | null }[] | null;
-  latitude: number | null;
-  longitude: number | null;
-  accuracy_meters: number | null;
-  notes: string | null;
-};
-
-type DerivedLog = AttendanceLog & {
-  statusLabel: string;
-  durationMinutes: number | null;
-  dayKey: string;
-};
+import HistoryEmptyState from "@/components/history/HistoryEmptyState";
+import HistoryDetailModal from "@/components/history/HistoryDetailModal";
+import HistoryIncidentModal from "@/components/history/HistoryIncidentModal";
+import { HISTORY_UI } from "@/components/history/ui";
+import type { AttendanceLog, DerivedLog } from "@/components/history/types";
 
 type RangeMode = "week" | "month";
 
-const UI = {
-  card: {
-    backgroundColor: "white",
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    shadowColor: COLORS.text,
-    shadowOpacity: 0.06,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 4,
-  },
-  pill: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-} as const;
+const UI = HISTORY_UI;
 
 function formatHour(value: string) {
   return new Date(value).toLocaleTimeString("es-CO", {
@@ -481,18 +441,7 @@ export default function HistoryScreen() {
           </View>
         ) : null}
 
-        {!isLoading && grouped.length === 0 ? (
-          <View style={{ paddingTop: 40, alignItems: "center" }}>
-            <Text
-              style={{ fontSize: 14, fontWeight: "700", color: COLORS.text }}
-            >
-              Sin registros
-            </Text>
-            <Text style={{ marginTop: 6, color: COLORS.neutral }}>
-              No hay movimientos en este periodo.
-            </Text>
-          </View>
-        ) : null}
+        {!isLoading && grouped.length === 0 ? <HistoryEmptyState /> : null}
 
         {grouped.map(([dayKey, items]) => (
           <View key={dayKey} style={{ marginBottom: 16 }}>
@@ -693,139 +642,23 @@ export default function HistoryScreen() {
         ))}
       </ScrollView>
 
-      <Modal transparent visible={isDetailOpen} animationType="fade">
-        <Pressable
-          style={styles.modalOverlay}
-          onPress={() => setIsDetailOpen(false)}
-        >
-          <Pressable
-            onPress={(event) => event.stopPropagation()}
-            style={styles.modalCard}
-          >
-            <Text style={styles.modalTitle}>Detalle del registro</Text>
-            {selectedLog ? (
-              <View style={{ marginTop: 12 }}>
-                <Text style={styles.modalLabel}>Acción</Text>
-                <Text style={styles.modalValue}>
-                  {selectedLog.action === "check_in" ? "Entrada" : "Salida"}
-                </Text>
+      <HistoryDetailModal
+        visible={isDetailOpen}
+        log={selectedLog}
+        onClose={() => setIsDetailOpen(false)}
+        formatHour={formatHour}
+        formatDuration={formatDuration}
+        getSiteName={getSiteName}
+      />
 
-                <Text style={styles.modalLabel}>Hora</Text>
-                <Text style={styles.modalValue}>
-                  {formatHour(selectedLog.occurred_at)}
-                </Text>
-
-                <Text style={styles.modalLabel}>Sede</Text>
-                <Text style={styles.modalValue}>
-                  {getSiteName(selectedLog.sites) ?? "Sin sede"}
-                </Text>
-
-                <Text style={styles.modalLabel}>Estado</Text>
-                <Text style={styles.modalValue}>{selectedLog.statusLabel}</Text>
-
-                <Text style={styles.modalLabel}>Duración</Text>
-                <Text style={styles.modalValue}>
-                  {formatDuration(selectedLog.durationMinutes)}
-                </Text>
-
-                <Text style={styles.modalLabel}>Precisión</Text>
-                <Text style={styles.modalValue}>
-                  {selectedLog.accuracy_meters != null
-                    ? `${Math.round(selectedLog.accuracy_meters)}m`
-                    : "--"}
-                </Text>
-              </View>
-            ) : null}
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "flex-end",
-                marginTop: 16,
-              }}
-            >
-              <TouchableOpacity
-                onPress={() => setIsDetailOpen(false)}
-                style={[
-                  UI.chip,
-                  {
-                    borderColor: COLORS.border,
-                    backgroundColor: COLORS.porcelainAlt,
-                  },
-                ]}
-              >
-                <Text style={{ fontWeight: "700", color: COLORS.text }}>
-                  Cerrar
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      <Modal transparent visible={isIncidentOpen} animationType="fade">
-        <Pressable
-          style={styles.modalOverlay}
-          onPress={() => setIsIncidentOpen(false)}
-        >
-          <Pressable
-            onPress={(event) => event.stopPropagation()}
-            style={styles.modalCard}
-          >
-            <Text style={styles.modalTitle}>Incidencia</Text>
-            <Text style={styles.modalSubtitle}>
-              Describe lo que pasó en este registro.
-            </Text>
-
-            <TextInput
-              value={incidentText}
-              onChangeText={setIncidentText}
-              placeholderTextColor={COLORS.neutral}
-              placeholder="Escribe el detalle..."
-              multiline
-              style={styles.input}
-            />
-
-            <View
-              style={{
-                flexDirection: "row",
-                gap: 10,
-                justifyContent: "flex-end",
-              }}
-            >
-              <TouchableOpacity
-                onPress={() => setIsIncidentOpen(false)}
-                style={[
-                  UI.chip,
-                  {
-                    borderColor: COLORS.border,
-                    backgroundColor: COLORS.porcelainAlt,
-                  },
-                ]}
-              >
-                <Text style={{ fontWeight: "700", color: COLORS.text }}>
-                  Cancelar
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={saveIncident}
-                disabled={isSavingIncident}
-                style={[
-                  UI.chip,
-                  {
-                    borderColor: COLORS.rosegold,
-                    backgroundColor: "rgba(242, 198, 192, 0.25)",
-                    opacity: isSavingIncident ? 0.7 : 1,
-                  },
-                ]}
-              >
-                <Text style={{ fontWeight: "700", color: COLORS.rosegold }}>
-                  {isSavingIncident ? "Guardando..." : "Guardar"}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      <HistoryIncidentModal
+        visible={isIncidentOpen}
+        incidentText={incidentText}
+        isSaving={isSavingIncident}
+        onChangeText={setIncidentText}
+        onCancel={() => setIsIncidentOpen(false)}
+        onSave={saveIncident}
+      />
     </View>
   );
 }
@@ -844,52 +677,6 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontSize: 13,
     color: COLORS.neutral,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    padding: 20,
-    justifyContent: "center",
-  },
-  modalCard: {
-    backgroundColor: "white",
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: COLORS.text,
-  },
-  modalSubtitle: {
-    fontSize: 12,
-    color: COLORS.neutral,
-    marginTop: 6,
-  },
-  modalLabel: {
-    fontSize: 12,
-    color: COLORS.neutral,
-    marginTop: 10,
-  },
-  modalValue: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: COLORS.text,
-    marginTop: 4,
-  },
-  input: {
-    minHeight: 90,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.porcelainAlt,
-    padding: 12,
-    marginTop: 12,
-    marginBottom: 12,
-    color: COLORS.text,
-    textAlignVertical: "top",
   },
   segmentWrap: {
     flexDirection: "row",

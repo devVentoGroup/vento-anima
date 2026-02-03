@@ -1,49 +1,19 @@
 import { useState } from "react";
 import {
   Alert,
-  Modal,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
+import SupportTicketModal from "@/components/support/SupportTicketModal";
+import { SUPPORT_UI } from "@/components/support/ui";
 
-const UI = {
-  card: {
-    backgroundColor: "white",
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    shadowColor: COLORS.text,
-    shadowOpacity: 0.06,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 4,
-  },
-  chip: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  row: {
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: "white",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-} as const;
+const UI = SUPPORT_UI;
 
 export default function SupportScreen() {
   const insets = useSafeAreaInsets();
@@ -195,71 +165,13 @@ export default function SupportScreen() {
         </View>
       </ScrollView>
 
-      <Modal transparent visible={isTicketOpen} animationType="fade">
-        <Pressable
-          style={styles.modalOverlay}
-          onPress={() => setIsTicketOpen(false)}
-        >
-          <Pressable
-            onPress={(event) => event.stopPropagation()}
-            style={styles.modalCard}
-          >
-            <Text style={styles.modalTitle}>Nuevo ticket</Text>
-            <Text style={styles.modalSubtitle}>
-              Describe el problema con el mayor detalle posible.
-            </Text>
-            <TextInput
-              value={message}
-              onChangeText={setMessage}
-              placeholder="Ej: No puedo registrar entrada en Vento Group."
-              placeholderTextColor={COLORS.neutral}
-              multiline
-              style={styles.input}
-            />
-
-            <View
-              style={{
-                flexDirection: "row",
-                gap: 10,
-                justifyContent: "flex-end",
-              }}
-            >
-              <TouchableOpacity
-                onPress={() => setIsTicketOpen(false)}
-                style={[
-                  UI.chip,
-                  {
-                    borderColor: COLORS.border,
-                    backgroundColor: COLORS.porcelainAlt,
-                  },
-                ]}
-              >
-                <Text style={{ fontWeight: "700", color: COLORS.text }}>
-                  Cancelar
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={submitTicket}
-                style={[
-                  UI.chip,
-                  {
-                    borderColor: COLORS.accent,
-                    backgroundColor: "rgba(226, 0, 106, 0.12)",
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 8,
-                  },
-                ]}
-              >
-                <Ionicons name="send-outline" size={16} color={COLORS.accent} />
-                <Text style={{ fontWeight: "800", color: COLORS.accent }}>
-                  Enviar
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      <SupportTicketModal
+        visible={isTicketOpen}
+        message={message}
+        onChangeMessage={setMessage}
+        onClose={() => setIsTicketOpen(false)}
+        onSubmit={submitTicket}
+      />
     </View>
   );
 }
@@ -288,40 +200,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: COLORS.neutral,
     marginTop: 6,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    padding: 20,
-    justifyContent: "center",
-  },
-  modalCard: {
-    backgroundColor: "white",
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: COLORS.text,
-  },
-  modalSubtitle: {
-    fontSize: 12,
-    color: COLORS.neutral,
-    marginTop: 6,
-  },
-  input: {
-    minHeight: 110,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.porcelainAlt,
-    padding: 12,
-    marginTop: 12,
-    marginBottom: 12,
-    color: COLORS.text,
-    textAlignVertical: "top",
   },
 });
