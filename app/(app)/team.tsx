@@ -15,13 +15,13 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
-import { FunctionsHttpError } from "@supabase/supabase-js";
 import { useAuth } from "@/contexts/auth-context";
 import TeamEmptyState from "@/components/team/TeamEmptyState";
 import TeamMemberCard from "@/components/team/TeamMemberCard";
 import TeamEditModal from "@/components/team/TeamEditModal";
 import TeamInviteModal from "@/components/team/TeamInviteModal";
 import { TEAM_UI } from "@/components/team/ui";
+import { getUserFacingAuthError } from "@/utils/error-messages";
 import type {
   EditFormState,
   EmployeeRow,
@@ -565,25 +565,17 @@ export default function TeamScreen() {
       );
 
       if (error) {
-        let msg = "No se pudo crear la invitación.";
-        if (error instanceof FunctionsHttpError && error.context) {
-          try {
-            const body = (await error.context.json()) as { error?: string };
-            if (body?.error) msg = body.error;
-          } catch {
-            msg = error.message ?? msg;
-          }
-        } else {
-          msg = (error as Error)?.message ?? (data as { error?: string } | null)?.error ?? msg;
-        }
-        Alert.alert("Equipo", msg);
+        Alert.alert(
+          "Equipo",
+          getUserFacingAuthError(
+            error,
+            "No se pudo procesar la invitación. Intenta nuevamente.",
+          ),
+        );
         return;
       }
       if (!data?.invited && !(data as { added_to_team?: boolean })?.added_to_team) {
-        const msg =
-          (data as { error?: string } | null)?.error ??
-          "No se pudo enviar la invitación.";
-        Alert.alert("Equipo", msg);
+        Alert.alert("Equipo", "No se pudo enviar la invitación.");
         return;
       }
 
@@ -595,9 +587,13 @@ export default function TeamScreen() {
       );
     } catch (err) {
       console.error("Invite error:", err);
-      const msg =
-        err instanceof Error ? err.message : "No se pudo crear la invitación.";
-      Alert.alert("Equipo", msg);
+      Alert.alert(
+        "Equipo",
+        getUserFacingAuthError(
+          err,
+          "No se pudo procesar la invitación. Intenta nuevamente.",
+        ),
+      );
     } finally {
       setIsInviting(false);
     }
@@ -899,6 +895,5 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
 });
-
 
 

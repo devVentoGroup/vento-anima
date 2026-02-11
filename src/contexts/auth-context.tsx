@@ -539,7 +539,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
 
     if (error) {
-      console.error("Sign-in error:", error)
       throw error
     }
   }

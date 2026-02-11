@@ -11,8 +11,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { COLORS } from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
-import { FunctionsHttpError } from "@supabase/supabase-js";
 import InviteContent from "@/components/auth/invite/InviteContent";
+import { getUserFacingAuthError } from "@/utils/error-messages";
 
 const parseTokensFromUrl = (url: string) => {
   const hash = url.split("#")[1] ?? "";
@@ -190,26 +190,16 @@ export default function InviteScreen() {
         },
       );
 
-      if (error) {
-        let msg = "No se pudo activar la invitación.";
-        if (error instanceof FunctionsHttpError && error.context) {
-          try {
-            const body = (await error.context.json()) as { error?: string };
-            if (body?.error) msg = body.error;
-          } catch {
-            msg = error.message ?? msg;
-          }
-          throw new Error(msg);
-        }
-        throw error;
-      }
+      if (error) throw error;
       const errMsg = (data as { error?: string } | null)?.error;
       if (errMsg) throw new Error(errMsg);
       router.replace("/home");
     } catch (err) {
       console.error("Invite accept error:", err);
-      const msg =
-        err instanceof Error ? err.message : "No se pudo activar la invitación.";
+      const msg = getUserFacingAuthError(
+        err,
+        "No se pudo procesar la invitación. Intenta nuevamente.",
+      );
       Alert.alert(isRecovery ? "Crear contraseña" : "Invitación", msg);
     } finally {
       setLoading(false);

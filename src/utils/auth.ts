@@ -11,6 +11,10 @@ const REVIEW_EMAILS = (process.env.EXPO_PUBLIC_REVIEW_EMAILS || "")
   .filter(Boolean);
 
 const REVIEW_PASSWORD = (process.env.EXPO_PUBLIC_REVIEW_PASSWORD || "").trim();
+const REVIEW_PASSWORD_OVERRIDE_ENABLED =
+  (process.env.EXPO_PUBLIC_REVIEW_PASSWORD_OVERRIDE_ENABLED || "")
+    .trim()
+    .toLowerCase() === "true";
 
 /** Email está en la allowlist de revisión (login con contraseña fija para reviewers). */
 export function isReviewEmail(email: string): boolean {
@@ -21,4 +25,13 @@ export function isReviewEmail(email: string): boolean {
 /** Contraseña fija para cuentas de revisión (Apple/Google). Usar solo si isReviewEmail(email). */
 export function getReviewPassword(): string {
   return REVIEW_PASSWORD;
+}
+
+/** Solo activa password fijo si está habilitado explícitamente por env. */
+export function shouldUseReviewPassword(email: string): boolean {
+  return (
+    REVIEW_PASSWORD_OVERRIDE_ENABLED &&
+    isReviewEmail(email) &&
+    REVIEW_PASSWORD.length > 0
+  );
 }

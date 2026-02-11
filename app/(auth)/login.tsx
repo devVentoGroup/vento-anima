@@ -22,7 +22,8 @@ import { useRouter } from "expo-router";
 import { COLORS } from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
-import { isReviewEmail, getReviewPassword } from "@/utils/auth";
+import { getReviewPassword, shouldUseReviewPassword } from "@/utils/auth";
+import { getUserFacingAuthError } from "@/utils/error-messages";
 import LoginBackground from "@/components/auth/login/LoginBackground";
 import LoginHeader from "@/components/auth/login/LoginHeader";
 import LoginForm from "@/components/auth/login/LoginForm";
@@ -113,28 +114,17 @@ export default function LoginScreen() {
     try {
       // Cuenta de revisión (Apple/Google): usar siempre la contraseña de demo para que
       // los revisores accedan aunque la copien mal desde App Store Connect.
-      const effectivePassword = isReviewEmail(trimmedEmail)
+      const effectivePassword = shouldUseReviewPassword(trimmedEmail)
         ? getReviewPassword() || password
         : password;
       await signIn(trimmedEmail, effectivePassword);
     } catch (e: any) {
-      const msg = (e?.message || "").toLowerCase();
-
-      if (
-        msg.includes("invalid") ||
-        msg.includes("credentials") ||
-        msg.includes("password")
-      ) {
-        setErrorMsg("Correo o contraseña incorrectos.");
-      } else if (
-        msg.includes("network") ||
-        msg.includes("fetch") ||
-        msg.includes("connection")
-      ) {
-        setErrorMsg("No pudimos conectar. Revisa tu internet e inténtalo de nuevo.");
-      } else {
-        setErrorMsg("No pudimos iniciar sesión. Intenta nuevamente.");
-      }
+      setErrorMsg(
+        getUserFacingAuthError(
+          e,
+          "No pudimos iniciar sesión. Intenta nuevamente.",
+        ),
+      );
     } finally {
       setLoading(false);
     }
@@ -182,7 +172,10 @@ export default function LoginScreen() {
         if (error) {
           Alert.alert(
             "Enlace de contraseña",
-            error.message || "No se pudo enviar el correo.",
+            getUserFacingAuthError(
+              error,
+              "No se pudo enviar el enlace. Intenta nuevamente.",
+            ),
           );
           return;
         }
@@ -241,4 +234,3 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 });
-

@@ -101,7 +101,10 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
 
       var supabase = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
       supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
-        .then(function() {
+        .then(function(res) {
+          if (res && res.error) {
+            throw res.error;
+          }
           showState("stateForm");
         })
         .catch(function(err) {
@@ -123,7 +126,10 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
         }
         btn.disabled = true;
         supabase.auth.updateUser({ password: pwd })
-          .then(function() {
+          .then(function(res) {
+            if (res && res.error) {
+              throw res.error;
+            }
             showState("stateDone");
           })
           .catch(function(err) {
