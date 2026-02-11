@@ -1,10 +1,18 @@
 import type { ReactNode } from "react"
 import { createContext, useContext, useEffect, useRef, useState } from "react"
-import { AppState, type AppStateStatus } from "react-native"
+import {
+  ActivityIndicator,
+  AppState,
+  type AppStateStatus,
+  Platform,
+  StyleSheet,
+  View,
+} from "react-native"
 import { useRouter, useSegments } from "expo-router"
 import type { Session, User } from "@supabase/supabase-js"
-import { ActivityIndicator, StyleSheet, View } from "react-native"
 import * as SecureStore from "expo-secure-store"
+import * as Notifications from "expo-notifications"
+import * as Device from "expo-device"
 
 import { supabase } from "@/lib/supabase"
 
@@ -44,6 +52,7 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
+const EXPO_PROJECT_ID = "2e1ba93a-039d-49e7-962d-a33ea7eaf9b3"
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
@@ -65,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const lastBackgroundAtRef = useRef<number | null>(null)
   const pendingResumeSplashRef = useRef(false)
   const lastUserIdRef = useRef<string | null>(null)
+  const pushSyncInFlightRef = useRef(false)
 
   // Guardamos la ruta actual para poder consultarla dentro del listener de AppState
   const segmentsRef = useRef<string[]>(segments)
@@ -531,6 +541,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       router.replace("/splash")
     }
   }, [isLoading, router])
+
+  useEffect(() => {
+    const syncPushToken = async () => {
+      if (!user?.id) return
+      if (!Device.isDevice) return
+      if (pushSyncInFlightRef.current) return
+
+      pushSyncInFlightRef.current = true
+      try {
+        const permissions = await Notifications.getPermissionsAsync()
+        if (permissions.status !== "granted") return
+
+        const tokenResult = await Notifications.getExpoPushTokenAsync({
+          projectId: EXPO_PROJECT_ID,
+        })
+        const token = tokenResult.data
+        if (!token) return
+
+        await supabase.functions.invoke("register-push-token", {
+          body: {
+            token,
+            platform: Platform.OS,
+          },
+        })
+      } catch (err) {
+        console.warn("[AUTH] Push token sync skipped:", err)
+      } finally {
+        pushSyncInFlightRef.current = false
+      }
+    }
+
+    void syncPushToken()
+  }, [user?.id])
 
   const signIn = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({

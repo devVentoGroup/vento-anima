@@ -237,9 +237,7 @@ export default function DocumentsScreen() {
 
   const canManageScopes = useMemo(() => {
     const role = employee?.role ?? null;
-    return (
-      role === "propietario" || role === "gerente_general" || role === "gerente"
-    );
+    return role === "propietario" || role === "gerente_general" || role === "gerente";
   }, [employee?.role]);
   const canViewAllSites = useMemo(() => {
     const role = employee?.role ?? null;
@@ -490,25 +488,20 @@ export default function DocumentsScreen() {
         return
       }
 
-      console.log('[DOCUMENTS] Push token obtained, saving to database...')
-      
-      // Upsert con timeout manual
+      console.log('[DOCUMENTS] Push token obtained, saving through edge function...')
+
       const upsertTimeout = setTimeout(() => {
-        console.error('[DOCUMENTS] Push token upsert timeout')
+        console.error('[DOCUMENTS] Push token registration timeout')
         pushRegistrationRef.current = false
       }, 8000)
-      
-      const { error } = await supabase.from("employee_push_tokens").upsert(
-        {
-          employee_id: user.id,
+
+      const { error } = await supabase.functions.invoke("register-push-token", {
+        body: {
           token,
           platform: Platform.OS,
-          is_active: true,
-          last_seen: new Date().toISOString(),
         },
-        { onConflict: "token" },
-      )
-      
+      })
+
       clearTimeout(upsertTimeout)
 
       if (error) {

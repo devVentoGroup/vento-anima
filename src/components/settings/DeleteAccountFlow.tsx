@@ -12,7 +12,6 @@ import {
 import type { Session } from "@supabase/supabase-js";
 
 import { COLORS } from "@/constants/colors";
-import { supabase } from "@/lib/supabase";
 
 type PendingDeletion = {
   id: string;
@@ -35,15 +34,11 @@ export function DeleteAccountFlow({
   onRequestFullDeletion,
   onCancelFullDeletion,
 }: Props) {
-  const [otpCode, setOtpCode] = useState("");
-  const [otpVerified, setOtpVerified] = useState(false);
   const [phrase, setPhrase] = useState("");
   const [irreversibleChecked, setIrreversibleChecked] = useState(false);
-  const [sendingOtp, setSendingOtp] = useState(false);
-  const [checkingOtp, setCheckingOtp] = useState(false);
 
   const hasPending = pendingRequest?.status === "pending" || pendingRequest?.status === "processing";
-  const canSubmit = otpVerified && phrase.trim().toUpperCase() === "ELIMINAR" && irreversibleChecked && !submitting;
+  const canSubmit = phrase.trim().toUpperCase() === "ELIMINAR" && irreversibleChecked && !submitting;
 
   const executeDateText = useMemo(() => {
     if (!pendingRequest?.execute_after) return null;
@@ -57,59 +52,6 @@ export function DeleteAccountFlow({
     });
   }, [pendingRequest?.execute_after]);
 
-  const sendOtp = async () => {
-    const email = session.user.email;
-    if (!email) {
-      Alert.alert("Error", "No encontramos un correo valido para tu cuenta.");
-      return;
-    }
-
-    setSendingOtp(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { shouldCreateUser: false },
-    });
-    setSendingOtp(false);
-
-    if (error) {
-      Alert.alert("Error", error.message);
-      return;
-    }
-
-    setOtpVerified(false);
-    setOtpCode("");
-    Alert.alert("Codigo enviado", "Revisa tu correo e ingresa el codigo OTP.");
-  };
-
-  const verifyOtp = async () => {
-    const email = session.user.email;
-    if (!email) {
-      Alert.alert("Error", "No encontramos un correo valido para tu cuenta.");
-      return;
-    }
-
-    if (!otpCode.trim()) {
-      Alert.alert("Codigo requerido", "Ingresa el codigo OTP recibido.");
-      return;
-    }
-
-    setCheckingOtp(true);
-    const { error } = await supabase.auth.verifyOtp({
-      email,
-      token: otpCode.trim(),
-      type: "email",
-    });
-    setCheckingOtp(false);
-
-    if (error) {
-      Alert.alert("Error", error.message);
-      return;
-    }
-
-    setOtpVerified(true);
-    Alert.alert("Validado", "OTP verificado correctamente.");
-  };
-
   const handleSubmit = async () => {
     const result = await onRequestFullDeletion();
     if (!result.success) {
@@ -118,8 +60,6 @@ export function DeleteAccountFlow({
     }
 
     Alert.alert("Solicitud creada", "Tu cuenta quedo programada para eliminacion en 30 dias.");
-    setOtpCode("");
-    setOtpVerified(false);
     setPhrase("");
     setIrreversibleChecked(false);
   };
@@ -153,30 +93,7 @@ export function DeleteAccountFlow({
       ) : (
         <>
           <View style={styles.sectionBox}>
-            <Text style={styles.sectionTitle}>1) Validar OTP</Text>
-            <TouchableOpacity style={styles.secondaryButton} disabled={sendingOtp || submitting} onPress={sendOtp}>
-              {sendingOtp ? <ActivityIndicator color={COLORS.accent} /> : <Text style={styles.secondaryButtonText}>Enviar OTP</Text>}
-            </TouchableOpacity>
-
-            <TextInput
-              value={otpCode}
-              onChangeText={setOtpCode}
-              keyboardType="number-pad"
-              maxLength={6}
-              style={styles.input}
-              placeholder="Codigo OTP"
-              placeholderTextColor={COLORS.neutral}
-            />
-
-            <TouchableOpacity style={styles.secondaryButton} disabled={checkingOtp || submitting} onPress={verifyOtp}>
-              {checkingOtp ? <ActivityIndicator color={COLORS.accent} /> : <Text style={styles.secondaryButtonText}>Verificar OTP</Text>}
-            </TouchableOpacity>
-
-            {otpVerified ? <Text style={styles.okText}>OTP verificado</Text> : null}
-          </View>
-
-          <View style={styles.sectionBox}>
-            <Text style={styles.sectionTitle}>2) Confirmacion final</Text>
+            <Text style={styles.sectionTitle}>Confirmacion final</Text>
             <Text style={styles.helperLabel}>Escribe ELIMINAR</Text>
             <TextInput
               value={phrase}
@@ -262,11 +179,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     color: COLORS.accent,
-  },
-  okText: {
-    color: COLORS.success,
-    fontSize: 12,
-    fontWeight: "700",
   },
   switchRow: {
     flexDirection: "row",
