@@ -1,3 +1,7 @@
 {
-  "version": 2
+  "version": 2,
+  "builds": [
+    { "src": "api/set-password.js", "use": "@vercel/node" },
+    { "src": "api/request-password.js", "use": "@vercel/node" }
+  ]
 }
