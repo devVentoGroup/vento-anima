@@ -312,11 +312,25 @@ serve(async (req) => {
   }
 
   const newUserId = linkData?.user?.id ?? null
-  const actionLink =
-    (linkData as { properties?: { action_link?: string } })?.properties
-      ?.action_link ?? null
+  const linkProps =
+    (linkData as {
+      properties?: {
+        action_link?: string
+        hashed_token?: string
+        verification_type?: string
+      }
+    })?.properties ?? null
+  const actionLink = linkProps?.action_link ?? null
+  const hashedToken = linkProps?.hashed_token ?? null
+  const verificationType = linkProps?.verification_type ?? "invite"
+  const normalizedSetPasswordUrl = setPasswordWebUrl.replace(/\/+$/, "")
+  const tokenHashLink =
+    hashedToken
+      ? `${normalizedSetPasswordUrl}?token_hash=${encodeURIComponent(hashedToken)}&type=${encodeURIComponent(verificationType)}`
+      : null
+  const emailActionLink = tokenHashLink || actionLink
 
-  if (!newUserId || !actionLink) {
+  if (!newUserId || !emailActionLink) {
     return new Response(
       JSON.stringify({ error: "No se pudo generar el enlace de invitación" }),
       {
@@ -374,7 +388,7 @@ serve(async (req) => {
     Deno.env.get("ANIMA_INVITE_FROM_EMAIL") ?? "ANIMA <onboarding@resend.dev>"
 
   if (resendKey) {
-    // Template del correo: puedes editar texto y estilos; no quites ${actionLink}.
+    // Template del correo: puedes editar texto y estilos; no quites ${emailActionLink}.
     const inviteSubject = "Invitación a ANIMA – Crear contraseña"
     const html = `<!DOCTYPE html>
 <html>
@@ -383,9 +397,9 @@ serve(async (req) => {
   <div style="max-width:400px;margin:0 auto;background:#fff;border-radius:16px;padding:28px;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
     <h1 style="font-size:1.35rem;margin:0 0 8px;color:#1a1a1a;">Invitación a ANIMA</h1>
     <p style="color:#666;font-size:0.95rem;margin-bottom:20px;">Te han invitado al equipo. Haz clic en el enlace para crear tu contraseña y empezar a usar ANIMA.</p>
-    <p style="margin:24px 0;"><a href="${actionLink}" style="display:inline-block;padding:14px 24px;background:#e2006a;color:#fff;text-decoration:none;border-radius:10px;font-weight:600;">Crear contraseña</a></p>
+    <p style="margin:24px 0;"><a href="${emailActionLink}" style="display:inline-block;padding:14px 24px;background:#e2006a;color:#fff;text-decoration:none;border-radius:10px;font-weight:600;">Crear contraseña</a></p>
     <p style="color:#888;font-size:0.85rem;">Si el botón no funciona, copia y pega este enlace en el navegador:</p>
-    <p style="word-break:break-all;font-size:0.8rem;color:#666;">${actionLink}</p>
+    <p style="word-break:break-all;font-size:0.8rem;color:#666;">${emailActionLink}</p>
   </div>
 </body>
 </html>`
