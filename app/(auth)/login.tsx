@@ -160,8 +160,10 @@ export default function LoginScreen() {
 
   const inviteRedirectUrl =
     process.env.EXPO_PUBLIC_INVITE_URL ?? "anima://invite";
+  // Reset password debe llevar a la web de crear contraseña, no al deep link de la app
   const authRedirectUrl =
-    process.env.EXPO_PUBLIC_ANIMA_AUTH_REDIRECT_URL ?? inviteRedirectUrl;
+    process.env.EXPO_PUBLIC_ANIMA_AUTH_REDIRECT_URL ??
+    "https://anima.ventogroup.co/api/set-password";
 
   const handleForgotPassword = () => {
     const trimmedEmail = email.trim();
