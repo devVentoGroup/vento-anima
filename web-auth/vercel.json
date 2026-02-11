@@ -3,5 +3,9 @@
   "builds": [
     { "src": "api/set-password.js", "use": "@vercel/node" },
     { "src": "api/request-password.js", "use": "@vercel/node" }
+  ],
+  "routes": [
+    { "src": "/api/set-password", "dest": "/api/set-password.js" },
+    { "src": "/api/request-password", "dest": "/api/request-password.js" }
   ]
 }
