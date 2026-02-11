@@ -102,35 +102,46 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
 
       var supabase = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
       var establishSession;
+      var sessionReady = false;
 
       if (code) {
-        establishSession = supabase.auth.exchangeCodeForSession(code);
+        establishSession = function() {
+          return supabase.auth.exchangeCodeForSession(code);
+        };
       } else if (tokenHash) {
-        establishSession = supabase.auth.verifyOtp({
-          token_hash: tokenHash,
-          type: verifyType,
-        });
+        establishSession = function() {
+          return supabase.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: verifyType,
+          });
+        };
       } else if (accessToken && refreshToken) {
-        establishSession = supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        });
+        establishSession = function() {
+          return supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+        };
       } else {
         showState("stateInvalid");
         return;
       }
 
-      establishSession
-        .then(function(res) {
+      function ensureSession() {
+        if (sessionReady) {
+          return Promise.resolve();
+        }
+        return establishSession().then(function(res) {
           if (res && res.error) {
             throw res.error;
           }
-          showState("stateForm");
-        })
-        .catch(function(err) {
-          console.error(err);
-          showState("stateInvalid");
+          sessionReady = true;
         });
+      }
+
+      // Importante: no validar/consumir el token al cargar para evitar que
+      // prefetch de correo invalide el enlace antes de que el usuario lo use.
+      showState("stateForm");
 
       form.addEventListener("submit", function(e) {
         e.preventDefault();
@@ -145,7 +156,10 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
           return;
         }
         btn.disabled = true;
-        supabase.auth.updateUser({ password: pwd })
+        ensureSession()
+          .then(function() {
+            return supabase.auth.updateUser({ password: pwd });
+          })
           .then(function(res) {
             if (res && res.error) {
               throw res.error;
@@ -154,6 +168,11 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
           })
           .catch(function(err) {
             btn.disabled = false;
+            var raw = (err && err.message ? String(err.message) : "").toLowerCase();
+            if (raw.includes("expired") || raw.includes("invalid")) {
+              showState("stateInvalid");
+              return;
+            }
             showError(err.message || "No se pudo guardar la contraseña.");
           });
       });
