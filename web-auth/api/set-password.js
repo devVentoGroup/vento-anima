@@ -65,9 +65,13 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
   <script>
     (function() {
       var hash = (window.location.hash || "").slice(1);
-      var params = new URLSearchParams(hash);
-      var accessToken = params.get("access_token");
-      var refreshToken = params.get("refresh_token");
+      var hashParams = new URLSearchParams(hash);
+      var queryParams = new URLSearchParams(window.location.search || "");
+      var accessToken =
+        hashParams.get("access_token") || queryParams.get("access_token");
+      var refreshToken =
+        hashParams.get("refresh_token") || queryParams.get("refresh_token");
+      var code = queryParams.get("code");
 
       var stateLoading = document.getElementById("stateLoading");
       var stateInvalid = document.getElementById("stateInvalid");
@@ -94,13 +98,22 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
         return;
       }
 
-      if (!accessToken || !refreshToken) {
+      var supabase = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+      var establishSession;
+
+      if (code) {
+        establishSession = supabase.auth.exchangeCodeForSession(code);
+      } else if (accessToken && refreshToken) {
+        establishSession = supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+      } else {
         showState("stateInvalid");
         return;
       }
 
-      var supabase = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
-      supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+      establishSession
         .then(function(res) {
           if (res && res.error) {
             throw res.error;
