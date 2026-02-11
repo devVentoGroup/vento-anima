@@ -39,3 +39,7 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Google Cloud / Firebase service account (nunca subir a repo)
+vento-anima-*.json
+*-da03f1518c08.json
