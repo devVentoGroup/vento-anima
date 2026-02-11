@@ -51,9 +51,9 @@ export function UserMenuModal({
           <View style={{ height: 1, backgroundColor: COLORS.border }} />
 
           <TouchableOpacity onPress={onProfile} style={{ paddingVertical: 12, paddingHorizontal: 16 }}>
-            <Text style={{ fontSize: 14, fontWeight: "600", color: COLORS.text }}>Mi perfil</Text>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: COLORS.text }}>Configuracion y privacidad</Text>
             <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 2 }}>
-              Datos y preferencias
+              Eliminar cuenta y gestionar datos
             </Text>
           </TouchableOpacity>
 
@@ -70,3 +70,4 @@ export function UserMenuModal({
     </Modal>
   )
 }
+

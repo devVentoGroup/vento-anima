@@ -72,6 +72,8 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
       var refreshToken =
         hashParams.get("refresh_token") || queryParams.get("refresh_token");
       var code = queryParams.get("code");
+      var tokenHash = queryParams.get("token_hash") || hashParams.get("token_hash");
+      var verifyType = queryParams.get("type") || hashParams.get("type") || "recovery";
 
       var stateLoading = document.getElementById("stateLoading");
       var stateInvalid = document.getElementById("stateInvalid");
@@ -103,6 +105,11 @@ const getHtml = (supabaseUrl, supabaseAnonKey) => `<!DOCTYPE html>
 
       if (code) {
         establishSession = supabase.auth.exchangeCodeForSession(code);
+      } else if (tokenHash) {
+        establishSession = supabase.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: verifyType,
+        });
       } else if (accessToken && refreshToken) {
         establishSession = supabase.auth.setSession({
           access_token: accessToken,

@@ -851,7 +851,7 @@ export default function HomeScreen() {
         }}
         onProfile={() => {
           setIsUserMenuOpen(false);
-          handleSoon("Mi perfil");
+          router.push("/account-settings");
         }}
         onSignOut={handleSignOut}
       />
@@ -1711,3 +1711,5 @@ export default function HomeScreen() {
     </View>
   );
 }
+
+
