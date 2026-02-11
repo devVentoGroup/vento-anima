@@ -3,7 +3,7 @@ module.exports = {
     name: "ANIMA",
     slug: "anima",
     scheme: "anima",
-    version: "1.0.1",
+    version: "1.0.2",
     jsEngine: "hermes",
     privacyPolicyUrl: "https://clzdpinthhtknkmefsxx.supabase.co/storage/v1/object/public/public-documents/POLITICA%20TRATAMIENTO%20DE%20DATOS%20VENTO.pdf",
     orientation: "portrait",
@@ -19,7 +19,7 @@ module.exports = {
       icon: "./assets/icon-padded.png",
       supportsTablet: true,
       bundleIdentifier: "com.vento.anima",
-      buildNumber: "4",
+      buildNumber: "5",
       infoPlist: {
         NSLocationWhenInUseUsageDescription: "Necesitamos tu ubicación para validar el check-in.",
         "ITSAppUsesNonExemptEncryption": false
@@ -27,7 +27,7 @@ module.exports = {
     },
     android: {
       package: "com.vento.anima",
-      versionCode: 4,
+      versionCode: 8,
       adaptiveIcon: {
         foregroundImage: "./assets/adaptive-icon-padded.png",
         backgroundColor: "#F7F5F8"

@@ -1,4 +1,4 @@
-﻿import {
+import {
   StyleSheet,
   Text,
   TextInput,
@@ -15,6 +15,8 @@ type InviteContentProps = {
   loading: boolean;
   ready: boolean;
   errorMessage: string | null;
+  /** Flujo "olvidé mi contraseña": solo crear contraseña, sin nombre/alias. */
+  isRecovery?: boolean;
   onFullNameChange: (value: string) => void;
   onAliasChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
@@ -31,6 +33,7 @@ export default function InviteContent({
   loading,
   ready,
   errorMessage,
+  isRecovery = false,
   onFullNameChange,
   onAliasChange,
   onPasswordChange,
@@ -40,34 +43,44 @@ export default function InviteContent({
 }: InviteContentProps) {
   return (
     <View>
-      <Text style={styles.title}>Completa tu cuenta</Text>
+      <Text style={styles.title}>
+        {isRecovery ? "Crear contraseña" : "Completa tu cuenta"}
+      </Text>
       <Text style={styles.subtitle}>
         {ready
-          ? "Tu invitación fue validada. Crea tu contraseña."
-          : "Validando invitación..."}
+          ? isRecovery
+            ? "Crea una contraseña para entrar a ANIMA."
+            : "Tu invitación fue validada. Crea tu contraseña."
+          : isRecovery
+            ? "Validando enlace..."
+            : "Validando invitación..."}
       </Text>
 
       {errorMessage ? (
         <Text style={styles.errorText}>{errorMessage}</Text>
       ) : null}
 
-      <Text style={styles.label}>Nombre completo</Text>
-      <TextInput
-        value={fullName}
-        onChangeText={onFullNameChange}
-        placeholder="Nombre completo"
-        placeholderTextColor={COLORS.neutral}
-        style={styles.input}
-      />
+      {!isRecovery ? (
+        <>
+          <Text style={styles.label}>Nombre completo (obligatorio)</Text>
+          <TextInput
+            value={fullName}
+            onChangeText={onFullNameChange}
+            placeholder="Nombre completo"
+            placeholderTextColor={COLORS.neutral}
+            style={styles.input}
+          />
 
-      <Text style={styles.label}>Alias (opcional)</Text>
-      <TextInput
-        value={alias}
-        onChangeText={onAliasChange}
-        placeholder="Cómo te llaman en el equipo"
-        placeholderTextColor={COLORS.neutral}
-        style={styles.input}
-      />
+          <Text style={styles.label}>Alias (opcional)</Text>
+          <TextInput
+            value={alias}
+            onChangeText={onAliasChange}
+            placeholder="Cómo te llaman en el equipo"
+            placeholderTextColor={COLORS.neutral}
+            style={styles.input}
+          />
+        </>
+      ) : null}
 
       <Text style={styles.label}>Contraseña</Text>
       <TextInput
@@ -95,12 +108,20 @@ export default function InviteContent({
         style={[styles.primaryButton, loading ? { opacity: 0.7 } : null]}
       >
         <Text style={styles.primaryButtonText}>
-          {loading ? "Activando..." : "Activar cuenta"}
+          {loading
+            ? isRecovery
+              ? "Guardando..."
+              : "Activando..."
+            : isRecovery
+              ? "Crear contraseña"
+              : "Activar cuenta"}
         </Text>
       </TouchableOpacity>
 
       <TouchableOpacity onPress={onBack}>
-        <Text style={styles.link}>Volver a iniciar sesión</Text>
+        <Text style={styles.link}>
+          {isRecovery ? "Volver al login" : "Volver a iniciar sesión"}
+        </Text>
       </TouchableOpacity>
     </View>
   );

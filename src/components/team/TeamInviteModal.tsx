@@ -1,4 +1,4 @@
-﻿import {
+import {
   Modal,
   Pressable,
   ScrollView,
@@ -18,6 +18,8 @@ type TeamInviteModalProps = {
   insets: { top: number; bottom: number };
   form: InviteFormState;
   inviteEmailSent: string | null;
+  /** Cuando se agregó al equipo sin invitar (ya tenía cuenta). */
+  inviteSuccessMessage?: string | null;
   isInviting: boolean;
   canPickSites: boolean;
   inviteRoleLabel: string | null;
@@ -39,6 +41,7 @@ export default function TeamInviteModal({
   insets,
   form,
   inviteEmailSent,
+  inviteSuccessMessage = null,
   isInviting,
   canPickSites,
   inviteRoleLabel,
@@ -69,7 +72,7 @@ export default function TeamInviteModal({
         <View style={styles.modalCard}>
           <Text style={styles.modalTitle}>Invitar trabajador</Text>
           <Text style={styles.modalSubtitle}>
-            Enviaremos un correo con el enlace para crear la cuenta.
+            Si no tiene cuenta, le enviaremos un correo con el enlace para crearla. Si ya tiene cuenta (ej. en Vento Pass), se agregará al equipo y podrá entrar con su correo y contraseña.
           </Text>
 
           <Text style={styles.modalLabel}>Correo</Text>
@@ -136,9 +139,11 @@ export default function TeamInviteModal({
 
           {hasInvite ? (
             <View style={styles.successBox}>
-              <Text style={styles.successTitle}>Invitación enviada</Text>
+              <Text style={styles.successTitle}>
+                {inviteSuccessMessage ? "Agregado al equipo" : "Invitación enviada"}
+              </Text>
               <Text style={styles.modalHint}>
-                Correo enviado a {inviteEmailSent}.
+                {inviteSuccessMessage ?? `Correo enviado a ${inviteEmailSent}.`}
               </Text>
             </View>
           ) : null}

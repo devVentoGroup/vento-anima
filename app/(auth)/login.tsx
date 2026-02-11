@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Dimensions,
   KeyboardAvoidingView,
   Platform,
@@ -19,7 +20,9 @@ import Animated, {
 import { useRouter } from "expo-router";
 
 import { COLORS } from "@/constants/colors";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
+import { isReviewEmail, getReviewPassword } from "@/utils/auth";
 import LoginBackground from "@/components/auth/login/LoginBackground";
 import LoginHeader from "@/components/auth/login/LoginHeader";
 import LoginForm from "@/components/auth/login/LoginForm";
@@ -98,12 +101,22 @@ export default function LoginScreen() {
   }));
 
   const handleLogin = async () => {
-    if (!email || !password || loading) return;
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password || loading) return;
+    if (!/^\S+@\S+\.\S+$/.test(trimmedEmail)) {
+      setErrorMsg("Escribe un correo válido.");
+      return;
+    }
     setLoading(true);
     setErrorMsg(null);
 
     try {
-      await signIn(email.trim(), password);
+      // Cuenta de revisión (Apple/Google): usar siempre la contraseña de demo para que
+      // los revisores accedan aunque la copien mal desde App Store Connect.
+      const effectivePassword = isReviewEmail(trimmedEmail)
+        ? getReviewPassword() || password
+        : password;
+      await signIn(trimmedEmail, effectivePassword);
     } catch (e: any) {
       const msg = (e?.message || "").toLowerCase();
 
@@ -145,6 +158,39 @@ export default function LoginScreen() {
     if (errorMsg) setErrorMsg(null);
   };
 
+  const inviteRedirectUrl =
+    process.env.EXPO_PUBLIC_INVITE_URL ?? "anima://invite";
+  const authRedirectUrl =
+    process.env.EXPO_PUBLIC_ANIMA_AUTH_REDIRECT_URL ?? inviteRedirectUrl;
+
+  const handleForgotPassword = () => {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setErrorMsg("Escribe tu correo para enviarte el enlace.");
+      return;
+    }
+    if (!/^\S+@\S+\.\S+$/.test(trimmedEmail)) {
+      setErrorMsg("Escribe un correo válido.");
+      return;
+    }
+    setErrorMsg(null);
+    supabase.auth
+      .resetPasswordForEmail(trimmedEmail, { redirectTo: authRedirectUrl })
+      .then(({ error }) => {
+        if (error) {
+          Alert.alert(
+            "Enlace de contraseña",
+            error.message || "No se pudo enviar el correo.",
+          );
+          return;
+        }
+        Alert.alert(
+          "Revisa tu correo",
+          "Te enviamos un enlace para crear una nueva contraseña. Ábrelo en este dispositivo para continuar.",
+        );
+      });
+  };
+
   return (
     <Container {...containerProps}>
       <LoginBackground stars={stars} scanStyle={scanStyle} />
@@ -173,6 +219,7 @@ export default function LoginScreen() {
           onToggleShowPassword={() => setShowPassword((v) => !v)}
           onSubmit={handleLogin}
           onInvitePress={() => router.push("/invite")}
+          onForgotPasswordPress={handleForgotPassword}
         />
       </ScrollView>
     </Container>

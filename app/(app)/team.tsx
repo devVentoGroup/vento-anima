@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,6 +15,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import { useAuth } from "@/contexts/auth-context";
 import TeamEmptyState from "@/components/team/TeamEmptyState";
 import TeamMemberCard from "@/components/team/TeamMemberCard";
@@ -90,6 +91,9 @@ export default function TeamScreen() {
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [isInviting, setIsInviting] = useState(false);
   const [inviteEmailSent, setInviteEmailSent] = useState<string | null>(null);
+  const [inviteSuccessMessage, setInviteSuccessMessage] = useState<
+    string | null
+  >(null);
   const [inviteForm, setInviteForm] = useState<InviteFormState>({
     email: "",
     fullName: "",
@@ -509,6 +513,7 @@ export default function TeamScreen() {
       siteId: defaultSite,
     });
     setInviteEmailSent(null);
+    setInviteSuccessMessage(null);
     setIsInviteOpen(true);
     setActivePicker(null);
     setPickerQuery("");
@@ -517,6 +522,7 @@ export default function TeamScreen() {
   const closeInvite = () => {
     setIsInviteOpen(false);
     setInviteEmailSent(null);
+    setInviteSuccessMessage(null);
     setActivePicker(null);
     setPickerQuery("");
   };
@@ -558,41 +564,45 @@ export default function TeamScreen() {
         },
       );
 
-      if (error) throw error;
-      if (!data?.invited) {
-        throw new Error("No se pudo enviar la invitación.");
+      if (error) {
+        let msg = "No se pudo crear la invitación.";
+        if (error instanceof FunctionsHttpError && error.context) {
+          try {
+            const body = (await error.context.json()) as { error?: string };
+            if (body?.error) msg = body.error;
+          } catch {
+            msg = error.message ?? msg;
+          }
+        } else {
+          msg = (error as Error)?.message ?? (data as { error?: string } | null)?.error ?? msg;
+        }
+        Alert.alert("Equipo", msg);
+        return;
+      }
+      if (!data?.invited && !(data as { added_to_team?: boolean })?.added_to_team) {
+        const msg =
+          (data as { error?: string } | null)?.error ??
+          "No se pudo enviar la invitación.";
+        Alert.alert("Equipo", msg);
+        return;
       }
 
       setInviteEmailSent(inviteForm.email.trim());
+      setInviteSuccessMessage(
+        (data as { added_to_team?: boolean; message?: string })?.added_to_team
+          ? (data as { message?: string }).message ?? null
+          : null,
+      );
     } catch (err) {
       console.error("Invite error:", err);
-      Alert.alert("Equipo", "No se pudo crear la invitación.");
+      const msg =
+        err instanceof Error ? err.message : "No se pudo crear la invitación.";
+      Alert.alert("Equipo", msg);
     } finally {
       setIsInviting(false);
     }
   };
 
-  if (!canViewTeam) {
-    return (
-      <View style={[styles.root, { paddingTop: insets.top + 24 }]}>
-        <Text style={styles.title}>Equipo</Text>
-        <Text style={styles.subtitle}>
-          No tienes permisos para acceder a esta sección.
-        </Text>
-      </View>
-    );
-  }
-
-  const primarySiteLabel = form.primarySiteId
-    ? sites.find((site) => site.id === form.primarySiteId)?.name
-    : null;
-
-  const roleName = form.role ? roleLabel(form.role) : null;
-  const isEditingSelf = editingEmployee?.id === user?.id;
-  const canPickRole = canManageTeam && (!isEditingSelf || canAssignRole(form.role));
-  const canPickSites = canChangeSites;
-
-  const showFilters = canViewAllSites && sites.length > 0;
   const availableRoleOptions = useMemo(() => {
     if (isOwner) return roles;
     if (isGlobalManager) {
@@ -620,6 +630,28 @@ export default function TeamScreen() {
     const q = pickerQuery.trim().toLowerCase();
     return sites.filter((site) => site.name.toLowerCase().includes(q));
   }, [sites, pickerQuery]);
+
+  if (!canViewTeam) {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top + 24 }]}>
+        <Text style={styles.title}>Equipo</Text>
+        <Text style={styles.subtitle}>
+          No tienes permisos para acceder a esta sección.
+        </Text>
+      </View>
+    );
+  }
+
+  const primarySiteLabel = form.primarySiteId
+    ? sites.find((site) => site.id === form.primarySiteId)?.name
+    : null;
+
+  const roleName = form.role ? roleLabel(form.role) : null;
+  const isEditingSelf = editingEmployee?.id === user?.id;
+  const canPickRole = canManageTeam && (!isEditingSelf || canAssignRole(form.role));
+  const canPickSites = canChangeSites;
+
+  const showFilters = canViewAllSites && sites.length > 0;
 
   const editPicker =
     activePicker === "editRole" ||
@@ -818,6 +850,7 @@ export default function TeamScreen() {
         insets={insets}
         form={inviteForm}
         inviteEmailSent={inviteEmailSent}
+        inviteSuccessMessage={inviteSuccessMessage}
         isInviting={isInviting}
         canPickSites={canPickSites}
         inviteRoleLabel={inviteForm.role ? roleLabel(inviteForm.role) : null}

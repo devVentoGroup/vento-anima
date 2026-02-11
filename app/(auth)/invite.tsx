@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -11,6 +11,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { COLORS } from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import InviteContent from "@/components/auth/invite/InviteContent";
 
 const parseTokensFromUrl = (url: string) => {
@@ -18,11 +19,15 @@ const parseTokensFromUrl = (url: string) => {
   const hashParams = new URLSearchParams(hash);
   const query = url.split("?")[1]?.split("#")[0] ?? "";
   const queryParams = new URLSearchParams(query);
+  const accessToken =
+    hashParams.get("access_token") ?? queryParams.get("access_token");
+  const refreshToken =
+    hashParams.get("refresh_token") ?? queryParams.get("refresh_token");
+  const type = hashParams.get("type") ?? queryParams.get("type");
   return {
-    accessToken:
-      hashParams.get("access_token") ?? queryParams.get("access_token"),
-    refreshToken:
-      hashParams.get("refresh_token") ?? queryParams.get("refresh_token"),
+    accessToken,
+    refreshToken,
+    isRecovery: type === "recovery",
   };
 };
 
@@ -37,6 +42,7 @@ export default function InviteScreen() {
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isRecovery, setIsRecovery] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -51,13 +57,19 @@ export default function InviteScreen() {
       }
 
       if (!url) {
-        setErrorMessage("No encontramos tu enlace de invitación.");
+        setErrorMessage(
+          "Abre el enlace que te enviamos por correo para crear tu contraseña (en el navegador). Después podrás entrar aquí con tu correo y contraseña. Si no recibiste el correo, revisa spam o pide que te reenvíen la invitación.",
+        );
         return;
       }
 
-      const { accessToken, refreshToken } = parseTokensFromUrl(url);
+      const { accessToken, refreshToken, isRecovery: recovery } = parseTokensFromUrl(url);
       if (!accessToken || !refreshToken) {
-        setErrorMessage("El enlace de invitación no es válido o venció.");
+        setErrorMessage(
+          recovery
+            ? "El enlace para crear contraseña no es válido o venció."
+            : "El enlace de invitación no es válido o venció.",
+        );
         return;
       }
 
@@ -70,10 +82,11 @@ export default function InviteScreen() {
 
       if (error) {
         console.error("Invite session error:", error);
-        setErrorMessage("No se pudo validar la invitación.");
+        setErrorMessage("No se pudo validar el enlace.");
         return;
       }
 
+      setIsRecovery(recovery);
       setReady(true);
     };
 
@@ -124,27 +137,46 @@ export default function InviteScreen() {
 
   const handleAccept = async () => {
     if (!ready) {
-      Alert.alert("Invitación", "Aún estamos validando la invitación.");
+      Alert.alert(
+        isRecovery ? "Crear contraseña" : "Invitación",
+        isRecovery
+          ? "Aún estamos validando el enlace."
+          : "Aún estamos validando la invitación.",
+      );
+      return;
+    }
+    if (!isRecovery && !fullName.trim()) {
+      Alert.alert("Invitación", "Escribe tu nombre completo.");
       return;
     }
     if (!password || password.length < 8) {
       Alert.alert(
-        "Invitación",
+        isRecovery ? "Crear contraseña" : "Invitación",
         "La contraseña debe tener al menos 8 caracteres.",
       );
       return;
     }
     if (password !== confirmPassword) {
-      Alert.alert("Invitación", "Las contraseñas no coinciden.");
+      Alert.alert(
+        isRecovery ? "Crear contraseña" : "Invitación",
+        "Las contraseñas no coinciden.",
+      );
       return;
     }
 
     setLoading(true);
     try {
+      if (isRecovery) {
+        const { error } = await supabase.auth.updateUser({ password });
+        if (error) throw error;
+        router.replace("/home");
+        return;
+      }
+
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData.session?.access_token;
 
-      const { error } = await supabase.functions.invoke(
+      const { data, error } = await supabase.functions.invoke(
         "staff-invitations-accept",
         {
           body: {
@@ -158,11 +190,27 @@ export default function InviteScreen() {
         },
       );
 
-      if (error) throw error;
+      if (error) {
+        let msg = "No se pudo activar la invitación.";
+        if (error instanceof FunctionsHttpError && error.context) {
+          try {
+            const body = (await error.context.json()) as { error?: string };
+            if (body?.error) msg = body.error;
+          } catch {
+            msg = error.message ?? msg;
+          }
+          throw new Error(msg);
+        }
+        throw error;
+      }
+      const errMsg = (data as { error?: string } | null)?.error;
+      if (errMsg) throw new Error(errMsg);
       router.replace("/home");
     } catch (err) {
       console.error("Invite accept error:", err);
-      Alert.alert("Invitación", "No se pudo activar la invitación.");
+      const msg =
+        err instanceof Error ? err.message : "No se pudo activar la invitación.";
+      Alert.alert(isRecovery ? "Crear contraseña" : "Invitación", msg);
     } finally {
       setLoading(false);
     }
@@ -189,6 +237,7 @@ export default function InviteScreen() {
           loading={loading}
           ready={ready}
           errorMessage={errorMessage}
+          isRecovery={isRecovery}
           onFullNameChange={setFullName}
           onAliasChange={setAlias}
           onPasswordChange={setPassword}
