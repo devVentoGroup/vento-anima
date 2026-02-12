@@ -1,90 +1,337 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Politica de Privacidad - ANIMA</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Política de Privacidad | ANIMA</title>
+    <meta
+      name="description"
+      content="Política de Privacidad de ANIMA: tratamiento de datos, finalidades, geolocalización, seguridad, derechos y contacto."
+    />
     <style>
       :root {
-        color-scheme: light;
+        --bg: #fdf7fa;
+        --card: #ffffff;
+        --card-soft: #fff1f7;
+        --text: #1f1a22;
+        --text-soft: #6f6574;
+        --brand: #e2006a;
+        --brand-dark: #b00053;
+        --brand-soft: #ffd4e8;
+        --line: #ecd8e3;
       }
+
+      * { box-sizing: border-box; }
+
       body {
         margin: 0;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        background: #f7f5f8;
-        color: #1f1a22;
+        font-family: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(1000px 520px at 100% -10%, rgba(226, 0, 106, 0.15), transparent 58%),
+          radial-gradient(800px 380px at -10% 0%, rgba(226, 0, 106, 0.08), transparent 60%),
+          var(--bg);
       }
+
       .wrap {
-        max-width: 860px;
+        width: min(1040px, 94%);
         margin: 0 auto;
-        padding: 28px 20px 48px;
+        padding: 34px 0 58px;
       }
-      h1 {
-        margin: 0 0 8px;
-        font-size: 28px;
+
+      .hero {
+        background: linear-gradient(140deg, #4b1530 0%, #7a1144 45%, #e2006a 100%);
+        color: #fff7fb;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 26px;
+        padding: 30px 26px;
+        box-shadow: 0 24px 52px rgba(122, 17, 68, 0.26);
       }
-      h2 {
-        margin-top: 28px;
-        font-size: 18px;
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        letter-spacing: 0.35px;
+        text-transform: uppercase;
+        font-weight: 800;
+        color: #5a1234;
+        background: linear-gradient(90deg, #ffd4e8, #fff0f7);
+        border-radius: 999px;
+        padding: 7px 12px;
       }
-      p,
-      li {
-        line-height: 1.6;
-        font-size: 15px;
+
+      .hero h1 {
+        margin: 16px 0 10px;
+        font-size: clamp(30px, 4vw, 46px);
+        line-height: 1.06;
+        letter-spacing: -0.02em;
       }
+
+      .hero p {
+        margin: 0;
+        max-width: 840px;
+        color: rgba(255, 247, 251, 0.94);
+        font-size: 16px;
+        line-height: 1.65;
+      }
+
+      .meta {
+        margin-top: 16px;
+        color: rgba(255, 247, 251, 0.82);
+        font-size: 14px;
+      }
+
+      .grid {
+        margin-top: 22px;
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        gap: 16px;
+      }
+
       .card {
-        background: #fff;
-        border: 1px solid #e8e1ea;
-        border-radius: 14px;
-        padding: 18px;
+        grid-column: span 12;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 22px;
+        box-shadow: 0 12px 34px rgba(37, 14, 29, 0.07);
       }
-      .muted {
-        color: #6d6473;
+
+      .card h2 {
+        margin: 0 0 10px;
+        font-size: 20px;
+        line-height: 1.2;
+        color: #3d1730;
       }
-      a {
-        color: #9d1450;
-        font-weight: 600;
+
+      .card p,
+      .card li {
+        margin: 0;
+        line-height: 1.7;
+        font-size: 15px;
+        color: #4f4150;
+      }
+
+      .card p + p,
+      .card ul,
+      .card ol { margin-top: 10px; }
+
+      .card ul,
+      .card ol { padding-left: 20px; }
+
+      .split {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 16px;
+      }
+
+      .soft {
+        background: var(--card-soft);
+        border: 1px solid var(--brand-soft);
+      }
+
+      .highlight {
+        border-left: 5px solid var(--brand);
+        background: #fff5fa;
+      }
+
+      .contact {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: #ffffff;
+        font-size: 14px;
+        color: #3d1730;
+        text-decoration: none;
+        font-weight: 700;
+      }
+
+      .chip.primary {
+        border-color: rgba(226, 0, 106, 0.35);
+        background: linear-gradient(90deg, #ffe1ef, #fff4f9);
+        color: var(--brand-dark);
+      }
+
+      a { color: var(--brand-dark); }
+
+      footer {
+        margin-top: 18px;
+        color: var(--text-soft);
+        text-align: center;
+        font-size: 13px;
+      }
+
+      @media (min-width: 860px) {
+        .card.span-7 { grid-column: span 7; }
+        .card.span-5 { grid-column: span 5; }
+        .split { grid-template-columns: 1fr 1fr; }
       }
     </style>
   </head>
   <body>
     <main class="wrap">
-      <h1>Politica de Privacidad</h1>
-      <p class="muted">Aplicacion: ANIMA - Control de Asistencia</p>
-      <div class="card">
+      <section class="hero" aria-label="Encabezado de política de privacidad">
+        <span class="badge">ANIMA • Privacidad</span>
+        <h1>Política de Privacidad y Tratamiento de Datos Personales</h1>
         <p>
-          En ANIMA tratamos los datos personales para habilitar autenticacion, control de asistencia,
-          seguridad operativa, gestion de documentos internos y comunicacion laboral.
+          En ANIMA protegemos la información personal de colaboradores y usuarios autorizados. Esta política describe,
+          de manera transparente, qué datos tratamos, con qué finalidad, cómo los protegemos y cuáles son tus derechos.
         </p>
-        <p>
-          Los datos de ubicacion se usan solo para validar check-in/check-out por geocerca de sedes.
-          No vendemos datos personales a terceros.
-        </p>
-        <p>
-          Puedes consultar la version legal completa aqui:
-          <a
-            href="https://clzdpinthhtknkmefsxx.supabase.co/storage/v1/object/public/public-documents/POLITICA%20TRATAMIENTO%20DE%20DATOS%20VENTO.pdf"
-            target="_blank"
-            rel="noopener noreferrer"
-            >Descargar politica completa (PDF)</a
-          >.
-        </p>
-      </div>
+        <p class="meta">Última actualización: 12 de febrero de 2026</p>
+      </section>
 
-      <h2>Datos que podemos tratar</h2>
-      <ul>
-        <li>Identificacion y contacto (nombre, correo, rol laboral).</li>
-        <li>Registros de asistencia (hora, sede, estado de jornada).</li>
-        <li>Ubicacion durante check-in/check-out (si el usuario autoriza permiso).</li>
-        <li>Documentos y novedades internas segun permisos del rol.</li>
-      </ul>
+      <section class="grid" aria-label="Contenido de la política">
+        <article class="card span-7">
+          <h2>1. Responsable del tratamiento</h2>
+          <p>
+            El responsable del tratamiento de los datos personales es <strong>Vento Group</strong>, operador de la
+            plataforma ANIMA y de sus servicios asociados para gestión laboral interna.
+          </p>
+          <p>
+            Para asuntos de privacidad y protección de datos, puedes escribir a
+            <a href="mailto:soporte@ventogroup.co">soporte@ventogroup.co</a>.
+          </p>
+        </article>
 
-      <h2>Contacto</h2>
-      <p>
-        Si tienes dudas sobre privacidad o tratamiento de datos, contactanos en
-        <a href="mailto:soporte@ventogroup.co">soporte@ventogroup.co</a>.
-      </p>
+        <article class="card span-5 soft">
+          <h2>Resumen ejecutivo</h2>
+          <ul>
+            <li>ANIMA no comercializa datos personales con terceros.</li>
+            <li>La geolocalización se usa únicamente para validar check-in/check-out autorizado.</li>
+            <li>Aplicamos controles técnicos y organizativos de seguridad.</li>
+            <li>Los titulares pueden ejercer sus derechos conforme a la normativa aplicable.</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h2>2. Datos que tratamos</h2>
+          <div class="split">
+            <div>
+              <p><strong>Identificación y cuenta:</strong> nombre, correo electrónico, rol, sede y credenciales de acceso.</p>
+              <p><strong>Asistencia:</strong> registros de jornada, hora de ingreso/salida y novedades operativas.</p>
+            </div>
+            <div>
+              <p><strong>Geolocalización:</strong> ubicación puntual durante marcación de asistencia, cuando hay consentimiento.</p>
+              <p><strong>Técnicos:</strong> dispositivo, sesión, registros de seguridad y uso funcional de la plataforma.</p>
+            </div>
+          </div>
+        </article>
+
+        <article class="card span-7">
+          <h2>3. Finalidades del tratamiento</h2>
+          <ol>
+            <li>Gestionar autenticación, acceso y administración de perfiles según rol.</li>
+            <li>Controlar asistencia y validar marcaciones por geocerca de sedes habilitadas.</li>
+            <li>Publicar comunicaciones internas, documentos y novedades operativas.</li>
+            <li>Prevenir fraude, accesos indebidos y eventos de seguridad.</li>
+            <li>Mejorar continuidad, rendimiento y calidad del servicio.</li>
+            <li>Cumplir obligaciones legales, laborales y regulatorias aplicables.</li>
+          </ol>
+        </article>
+
+        <article class="card span-5 highlight">
+          <h2>4. Base legal</h2>
+          <p>
+            El tratamiento se fundamenta en el consentimiento del titular, la ejecución de la relación contractual o
+            laboral, y el cumplimiento de obligaciones legales según corresponda.
+          </p>
+        </article>
+
+        <article class="card">
+          <h2>5. Compartición de datos</h2>
+          <p>
+            La información puede compartirse con proveedores tecnológicos que actúan como encargados del tratamiento,
+            exclusivamente para operar infraestructura, autenticación, mensajería, soporte y seguridad.
+          </p>
+          <p>
+            Estos terceros están sujetos a obligaciones de confidencialidad, seguridad y uso limitado de la información.
+          </p>
+        </article>
+
+        <article class="card span-7">
+          <h2>6. Conservación de la información</h2>
+          <p>
+            Los datos se conservan durante el tiempo necesario para cumplir las finalidades descritas y obligaciones
+            legales o de auditoría. Posteriormente, se eliminan, anonimizan o bloquean de manera segura.
+          </p>
+        </article>
+
+        <article class="card span-5">
+          <h2>7. Seguridad</h2>
+          <p>
+            Implementamos medidas técnicas y administrativas razonables para proteger la confidencialidad, integridad y
+            disponibilidad de la información frente a pérdida, alteración o acceso no autorizado.
+          </p>
+        </article>
+
+        <article class="card">
+          <h2>8. Derechos del titular</h2>
+          <p>Como titular de los datos personales, puedes solicitar:</p>
+          <ul>
+            <li>Acceso a tu información personal.</li>
+            <li>Actualización o rectificación de datos inexactos.</li>
+            <li>Supresión cuando proceda legalmente.</li>
+            <li>Revocatoria del consentimiento en los casos aplicables.</li>
+            <li>Información sobre el uso dado a tus datos.</li>
+          </ul>
+          <p>
+            Puedes ejercer estos derechos escribiendo a
+            <a href="mailto:soporte@ventogroup.co">soporte@ventogroup.co</a>.
+          </p>
+        </article>
+
+        <article class="card span-7">
+          <h2>9. Menores de edad</h2>
+          <p>
+            ANIMA es una plataforma de uso laboral y no está dirigida a menores de edad. Si se detecta tratamiento
+            indebido, se adoptarán medidas de corrección o eliminación según la normativa vigente.
+          </p>
+        </article>
+
+        <article class="card span-5 soft">
+          <h2>10. Actualizaciones de esta política</h2>
+          <p>
+            Esta política puede ser modificada para reflejar cambios legales, operativos o de seguridad. La versión
+            vigente estará siempre disponible en esta misma URL.
+          </p>
+        </article>
+
+        <article class="card">
+          <h2>Contacto y versión documental</h2>
+          <p>
+            Si deseas consultar la política extendida en formato PDF o presentar una solicitud formal sobre privacidad,
+            utiliza los siguientes canales:
+          </p>
+          <div class="contact">
+            <a class="chip primary" href="mailto:soporte@ventogroup.co">soporte@ventogroup.co</a>
+            <a
+              class="chip"
+              href="https://clzdpinthhtknkmefsxx.supabase.co/storage/v1/object/public/public-documents/POLITICA%20TRATAMIENTO%20DE%20DATOS%20VENTO.pdf"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Abrir política completa (PDF)
+            </a>
+            <span class="chip">Vento Group • ANIMA</span>
+          </div>
+        </article>
+      </section>
+
+      <footer>
+        © Vento Group. ANIMA. Todos los derechos reservados.
+      </footer>
     </main>
   </body>
-  </html>
-
+</html>
