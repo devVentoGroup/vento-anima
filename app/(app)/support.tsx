@@ -10,6 +10,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
+import { CONTENT_HORIZONTAL_PADDING, CONTENT_MAX_WIDTH } from "@/constants/layout";
 import SupportTicketModal from "@/components/support/SupportTicketModal";
 import { SUPPORT_UI } from "@/components/support/ui";
 
@@ -34,7 +35,10 @@ export default function SupportScreen() {
     <View style={styles.root}>
       <ScrollView
         contentContainerStyle={{
-          paddingHorizontal: 20,
+          alignSelf: "center",
+          width: "100%",
+          maxWidth: CONTENT_MAX_WIDTH,
+          paddingHorizontal: CONTENT_HORIZONTAL_PADDING,
           paddingTop: Math.max(16, insets.top + 8),
           paddingBottom: Math.max(24, insets.bottom + 24),
         }}

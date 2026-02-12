@@ -5,7 +5,7 @@ module.exports = {
     scheme: "anima",
     version: "1.0.2",
     jsEngine: "hermes",
-    privacyPolicyUrl: "https://clzdpinthhtknkmefsxx.supabase.co/storage/v1/object/public/public-documents/POLITICA%20TRATAMIENTO%20DE%20DATOS%20VENTO.pdf",
+    privacyPolicyUrl: "https://anima.ventogroup.co/privacy-policy",
     orientation: "portrait",
     icon: "./assets/icon-padded.png",
     userInterfaceStyle: "light",
@@ -27,7 +27,7 @@ module.exports = {
     },
     android: {
       package: "com.vento.anima",
-      versionCode: 8,
+      versionCode: 9,
       adaptiveIcon: {
         foregroundImage: "./assets/adaptive-icon-padded.png",
         backgroundColor: "#F7F5F8"

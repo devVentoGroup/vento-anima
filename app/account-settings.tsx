@@ -45,7 +45,7 @@ export default function AccountSettingsScreen() {
         <StatusBar barStyle="dark-content" backgroundColor={COLORS.porcelain} />
         <View style={styles.centered}>
           <Text style={styles.title}>Configuracion y privacidad</Text>
-          <Text style={styles.muted}>No hay sesion activa.</Text>
+          <Text style={styles.muted}>No hay sesión activa.</Text>
           <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
             <Text style={styles.backButtonText}>Volver</Text>
           </TouchableOpacity>

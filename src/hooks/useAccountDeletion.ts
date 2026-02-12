@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+﻿import { useCallback, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
@@ -26,7 +26,7 @@ export function useAccountDeletion(session: Session | null) {
   const refreshStatus = useCallback(async (): Promise<ActionResult> => {
     if (!userId) {
       setPendingRequest(null);
-      return { success: false, error: "No hay sesion activa." };
+      return { success: false, error: "No hay sesión activa." };
     }
 
     setLoadingStatus(true);
@@ -56,7 +56,7 @@ export function useAccountDeletion(session: Session | null) {
     setSubmitting(false);
 
     if (error) return { success: false, error: error.message };
-    if (!data?.success) return { success: false, error: data?.error || "No se pudo completar la accion." };
+    if (!data?.success) return { success: false, error: data?.error || "No se pudo completar la acción." };
     return { success: true };
   }, []);
 
@@ -108,3 +108,4 @@ export function useAccountDeletion(session: Session | null) {
     ],
   );
 }
+

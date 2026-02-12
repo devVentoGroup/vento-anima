@@ -15,16 +15,21 @@ import { useFocusEffect } from "@react-navigation/native";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import * as MailComposer from "expo-mail-composer";
+import * as Notifications from "expo-notifications";
+import * as Device from "expo-device";
 import type { DateData } from "react-native-calendars";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
 import { useAuth } from "@/contexts/auth-context";
 import { useRouter } from "expo-router";
+import { Platform } from "react-native";
 import { useAttendanceContext } from "@/contexts/attendance-context";
+import { supabase } from "@/lib/supabase";
 import { DateRangeModal } from "@/components/home/DateRangeModal";
 import { SitePickerModal } from "@/components/home/SitePickerModal";
 import { UserMenuModal } from "@/components/home/UserMenuModal";
 import { PALETTE, RGBA } from "@/components/home/theme";
+import { CONTENT_HORIZONTAL_PADDING, CONTENT_MAX_WIDTH } from "@/constants/layout";
 function formatClock(value: string | null) {
   if (!value) return "--:--";
   const date = new Date(value);
@@ -32,6 +37,8 @@ function formatClock(value: string | null) {
   const minutes = date.getMinutes().toString().padStart(2, "0");
   return `${hours}:${minutes}`;
 }
+
+const EXPO_PROJECT_ID = "2e1ba93a-039d-49e7-962d-a33ea7eaf9b3";
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -100,6 +107,7 @@ export default function HomeScreen() {
   const initialLoadDoneRef = useRef(false);
   const lastStatusRef = useRef<string | null>(null);
   const lastUserIdRef = useRef<string | null>(null);
+  const notificationsPromptRequestedRef = useRef(false);
 
   useEffect(() => {
     if (user?.id !== lastUserIdRef.current) {
@@ -226,6 +234,61 @@ export default function HomeScreen() {
     base.setHours(0, 0, 0, 0);
     setCalendarMonth(base);
   }, [isDateModalOpen, reportEndDate]);
+
+  const syncPushToken = useCallback(async () => {
+    if (!user?.id || !Device.isDevice) return;
+    try {
+      const tokenResult = await Notifications.getExpoPushTokenAsync({
+        projectId: EXPO_PROJECT_ID,
+      });
+      const token = tokenResult.data;
+      if (!token) return;
+
+      const { error } = await supabase.functions.invoke("register-push-token", {
+        body: {
+          token,
+          platform: Platform.OS,
+        },
+      });
+      if (error) {
+        console.warn("[HOME] register-push-token error:", error);
+      }
+    } catch (err) {
+      console.warn("[HOME] Push token sync failed:", err);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      notificationsPromptRequestedRef.current = false;
+      return;
+    }
+    if (authIsLoading || isLoading || isGeoChecking) return;
+    if (!initialLoadDoneRef.current) return;
+    if (notificationsPromptRequestedRef.current) return;
+
+    notificationsPromptRequestedRef.current = true;
+
+    const timer = setTimeout(async () => {
+      try {
+        const permissions = await Notifications.getPermissionsAsync();
+        if (permissions.status === "granted") {
+          await syncPushToken();
+          return;
+        }
+        if (permissions.status !== "undetermined") return;
+
+        const asked = await Notifications.requestPermissionsAsync();
+        if (asked.status === "granted") {
+          await syncPushToken();
+        }
+      } catch (err) {
+        console.warn("[HOME] Notification permission flow skipped:", err);
+      }
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [user?.id, authIsLoading, isLoading, isGeoChecking, syncPushToken]);
 
   const displayName =
     employee?.alias ||
@@ -559,7 +622,7 @@ export default function HomeScreen() {
 
   const createReportFile = async () => {
     if (!session?.access_token) {
-      throw new Error("No hay sesion activa");
+      throw new Error("No hay sesión activa");
     }
 
     const start = reportStartDate;
@@ -884,7 +947,15 @@ export default function HomeScreen() {
       />
 
       
-      <View style={{ paddingHorizontal: 20, paddingTop: topPadding }}>
+      <View
+        style={{
+          alignSelf: "center",
+          width: "100%",
+          maxWidth: CONTENT_MAX_WIDTH,
+          paddingHorizontal: CONTENT_HORIZONTAL_PADDING,
+          paddingTop: topPadding,
+        }}
+      >
         <View
           style={{
             flexDirection: "row",
@@ -978,7 +1049,10 @@ export default function HomeScreen() {
       <ScrollView
         contentContainerStyle={{
           flexGrow: 1,
-          paddingHorizontal: 20,
+          alignSelf: "center",
+          width: "100%",
+          maxWidth: CONTENT_MAX_WIDTH,
+          paddingHorizontal: CONTENT_HORIZONTAL_PADDING,
           paddingVertical: 18,
         }}
         showsVerticalScrollIndicator={false}

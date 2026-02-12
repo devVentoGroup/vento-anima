@@ -17,7 +17,6 @@ import Animated, {
   withRepeat,
   withTiming,
 } from "react-native-reanimated";
-import { useRouter } from "expo-router";
 
 import { COLORS } from "@/constants/colors";
 import { supabase } from "@/lib/supabase";
@@ -31,7 +30,6 @@ import { createStarField } from "@/components/auth/login/starfield";
 
 export default function LoginScreen() {
   const { signIn } = useAuth();
-  const router = useRouter();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -148,8 +146,6 @@ export default function LoginScreen() {
     if (errorMsg) setErrorMsg(null);
   };
 
-  const inviteRedirectUrl =
-    process.env.EXPO_PUBLIC_INVITE_URL ?? "anima://invite";
   // Reset password debe llevar a la web de crear contraseña, no al deep link de la app
   const authRedirectUrl =
     process.env.EXPO_PUBLIC_ANIMA_AUTH_REDIRECT_URL ??
@@ -213,7 +209,6 @@ export default function LoginScreen() {
           onPasswordChange={handlePasswordChange}
           onToggleShowPassword={() => setShowPassword((v) => !v)}
           onSubmit={handleLogin}
-          onInvitePress={() => router.push("/invite")}
           onForgotPasswordPress={handleForgotPassword}
         />
       </ScrollView>
@@ -234,3 +229,4 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 });
+

@@ -23,6 +23,7 @@ import * as IntentLauncher from "expo-intent-launcher";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
+import { CONTENT_HORIZONTAL_PADDING, CONTENT_MAX_WIDTH } from "@/constants/layout";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
 import { DocumentCard } from "@/components/documents/DocumentCard";
@@ -447,16 +448,6 @@ export default function DocumentsScreen() {
   const refreshNotificationPermission = useCallback(async () => {
     const permissions = await Notifications.getPermissionsAsync()
     setNotificationsEnabled(permissions.status === "granted")
-  }, [])
-
-  const requestNotificationPermission = useCallback(async () => {
-    const permissions = await Notifications.requestPermissionsAsync()
-    const granted = permissions.status === "granted"
-    setNotificationsEnabled(granted)
-    if (granted) {
-      await ensureAndroidChannel()
-      pushRegistrationRef.current = false
-    }
   }, [])
 
   const registerPushToken = useCallback(async () => {
@@ -972,7 +963,10 @@ export default function DocumentsScreen() {
     <View style={styles.root}>
       <ScrollView
         contentContainerStyle={{
-          paddingHorizontal: 20,
+          alignSelf: "center",
+          width: "100%",
+          maxWidth: CONTENT_MAX_WIDTH,
+          paddingHorizontal: CONTENT_HORIZONTAL_PADDING,
           paddingTop: Math.max(16, insets.top + 8),
           paddingBottom: Math.max(24, insets.bottom + 24),
         }}
@@ -1020,25 +1014,10 @@ export default function DocumentsScreen() {
         {!notificationsEnabled ? (
           <View style={{ marginTop: 14 }}>
             <View style={[UI.card, { padding: 14 }]}>
-              <Text style={styles.alertTitle}>Activa recordatorios</Text>
+              <Text style={styles.alertTitle}>Notificaciones desactivadas</Text>
               <Text style={styles.alertSubtitle}>
-                Te avisaremos antes de que un documento venza.
+                Activa permisos de notificaciones desde la pantalla Home para recibir alertas.
               </Text>
-              <TouchableOpacity
-                onPress={requestNotificationPermission}
-                style={[
-                  UI.chip,
-                  {
-                    marginTop: 10,
-                    borderColor: COLORS.accent,
-                    backgroundColor: "rgba(226, 0, 106, 0.10)",
-                  },
-                ]}
-              >
-                <Text style={{ fontWeight: "800", color: COLORS.accent }}>
-                  Activar alertas
-                </Text>
-              </TouchableOpacity>
             </View>
           </View>
         ) : null}

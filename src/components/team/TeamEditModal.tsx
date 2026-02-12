@@ -1,5 +1,8 @@
 import {
+  Keyboard,
+  KeyboardEvent,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -7,10 +10,13 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
+import { useEffect, useMemo, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
+import { MODAL_MAX_WIDTH } from "@/constants/layout";
 import { TEAM_UI } from "@/components/team/ui";
 import type { EditFormState, RoleRow, SiteRow } from "@/components/team/types";
 
@@ -59,6 +65,39 @@ export default function TeamEditModal({
   onToggleSite,
   onSetPrimarySite,
 }: TeamEditModalProps) {
+  const { height: windowHeight } = useWindowDimensions();
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const isKeyboardVisible = keyboardHeight > 0;
+  const modalTopGap = Math.max(14, insets.top + 8);
+  const modalBottomGap = 20;
+  const modalMaxHeight = useMemo(() => {
+    if (isKeyboardVisible) {
+      return Math.max(240, windowHeight - keyboardHeight - modalTopGap - modalBottomGap);
+    }
+    return Math.max(340, windowHeight - modalBottomGap * 2);
+  }, [isKeyboardVisible, keyboardHeight, windowHeight, modalTopGap]);
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const onShow = (event: KeyboardEvent) => {
+      setKeyboardHeight(event.endCoordinates.height);
+    };
+    const onHide = () => {
+      setKeyboardHeight(0);
+    };
+
+    const showSub = Keyboard.addListener(showEvent, onShow);
+    const hideSub = Keyboard.addListener(hideEvent, onHide);
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
   return (
     <Modal
       transparent
@@ -67,141 +106,151 @@ export default function TeamEditModal({
       presentationStyle="overFullScreen"
       onRequestClose={onClose}
     >
-      <View style={styles.modalOverlay}>
+      <View
+        style={[
+          styles.modalOverlay,
+          isKeyboardVisible ? styles.modalOverlayKeyboard : styles.modalOverlayCentered,
+          { paddingTop: isKeyboardVisible ? modalTopGap : 20, paddingBottom: 20 },
+        ]}
+      >
         <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
-        <View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>Editar trabajador</Text>
-          <Text style={styles.modalSubtitle}>
-            Actualiza datos basicos, rol y sedes.
-          </Text>
 
-          <Text style={styles.modalLabel}>Nombre completo</Text>
-          <TextInput
-            value={form.fullName}
-            onChangeText={(value) => onUpdateForm({ fullName: value })}
-            placeholder="Nombre completo"
-            placeholderTextColor={COLORS.neutral}
-            style={styles.input}
-          />
-
-          <Text style={styles.modalLabel}>Alias</Text>
-          <TextInput
-            value={form.alias}
-            onChangeText={(value) => onUpdateForm({ alias: value })}
-            placeholder="Alias (opcional)"
-            placeholderTextColor={COLORS.neutral}
-            style={styles.input}
-          />
-
-          <Text style={styles.modalLabel}>Rol</Text>
-          <TouchableOpacity
-            onPress={canPickRole ? () => onOpenPicker("editRole") : undefined}
-            disabled={!canPickRole}
-            style={[
-              TEAM_UI.chip,
-              {
-                borderColor: COLORS.border,
-                backgroundColor: COLORS.porcelainAlt,
-                marginTop: 6,
-                opacity: canPickRole ? 1 : 0.6,
-              },
-            ]}
-          >
-            <View style={styles.selectRow}>
-              <Text style={styles.selectText}>
-                {roleName ?? "Selecciona un rol"}
+        <View style={styles.keyboardWrap}>
+          <View style={[styles.modalCard, { maxHeight: modalMaxHeight }]}>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.scrollContent}
+            >
+              <Text style={styles.modalTitle}>Editar trabajador</Text>
+              <Text style={styles.modalSubtitle}>
+                Actualiza datos basicos, rol y sedes.
               </Text>
-              <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
-            </View>
-          </TouchableOpacity>
 
-          <Text style={styles.modalLabel}>Sede principal</Text>
-          <TouchableOpacity
-            onPress={canPickSites ? () => onOpenPicker("editPrimary") : undefined}
-            disabled={!canPickSites}
-            style={[
-              TEAM_UI.chip,
-              {
-                borderColor: COLORS.border,
-                backgroundColor: COLORS.porcelainAlt,
-                marginTop: 6,
-                opacity: canPickSites ? 1 : 0.6,
-              },
-            ]}
-          >
-            <View style={styles.selectRow}>
-              <Text style={styles.selectText}>
-                {primarySiteLabel ?? "Selecciona la sede principal"}
-              </Text>
-              <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
-            </View>
-          </TouchableOpacity>
+              <Text style={styles.modalLabel}>Nombre completo</Text>
+              <TextInput
+                value={form.fullName}
+                onChangeText={(value) => onUpdateForm({ fullName: value })}
+                placeholder="Nombre completo"
+                placeholderTextColor={COLORS.neutral}
+                style={styles.input}
+              />
 
-          {canPickSites ? (
-            <>
-              <Text style={styles.modalLabel}>Sedes asignadas</Text>
+              <Text style={styles.modalLabel}>Alias</Text>
+              <TextInput
+                value={form.alias}
+                onChangeText={(value) => onUpdateForm({ alias: value })}
+                placeholder="Alias (opcional)"
+                placeholderTextColor={COLORS.neutral}
+                style={styles.input}
+              />
+
+              <Text style={styles.modalLabel}>Rol</Text>
               <TouchableOpacity
-                onPress={() => onOpenPicker("editSites")}
+                onPress={canPickRole ? () => onOpenPicker("editRole") : undefined}
+                disabled={!canPickRole}
                 style={[
                   TEAM_UI.chip,
                   {
                     borderColor: COLORS.border,
                     backgroundColor: COLORS.porcelainAlt,
                     marginTop: 6,
+                    opacity: canPickRole ? 1 : 0.6,
+                  },
+                ]}
+              >
+                <View style={styles.selectRow}>
+                  <Text style={styles.selectText}>{roleName ?? "Selecciona un rol"}</Text>
+                  <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
+                </View>
+              </TouchableOpacity>
+
+              <Text style={styles.modalLabel}>Sede principal</Text>
+              <TouchableOpacity
+                onPress={canPickSites ? () => onOpenPicker("editPrimary") : undefined}
+                disabled={!canPickSites}
+                style={[
+                  TEAM_UI.chip,
+                  {
+                    borderColor: COLORS.border,
+                    backgroundColor: COLORS.porcelainAlt,
+                    marginTop: 6,
+                    opacity: canPickSites ? 1 : 0.6,
                   },
                 ]}
               >
                 <View style={styles.selectRow}>
                   <Text style={styles.selectText}>
-                    {form.siteIds.length
-                      ? `${form.siteIds.length} sedes seleccionadas`
-                      : "Selecciona sedes"}
+                    {primarySiteLabel ?? "Selecciona la sede principal"}
                   </Text>
                   <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
                 </View>
               </TouchableOpacity>
-            </>
-          ) : null}
 
-          <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>Activo</Text>
-            <Switch
-              value={form.isActive}
-              onValueChange={(value) => onUpdateForm({ isActive: value })}
-              trackColor={{ false: COLORS.border, true: COLORS.rosegoldBright }}
-              thumbColor={form.isActive ? COLORS.rosegold : COLORS.neutral}
-            />
-          </View>
+              {canPickSites ? (
+                <>
+                  <Text style={styles.modalLabel}>Sedes asignadas</Text>
+                  <TouchableOpacity
+                    onPress={() => onOpenPicker("editSites")}
+                    style={[
+                      TEAM_UI.chip,
+                      {
+                        borderColor: COLORS.border,
+                        backgroundColor: COLORS.porcelainAlt,
+                        marginTop: 6,
+                      },
+                    ]}
+                  >
+                    <View style={styles.selectRow}>
+                      <Text style={styles.selectText}>
+                        {form.siteIds.length
+                          ? `${form.siteIds.length} sedes seleccionadas`
+                          : "Selecciona sedes"}
+                      </Text>
+                      <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
+                    </View>
+                  </TouchableOpacity>
+                </>
+              ) : null}
 
-          <View style={styles.modalActions}>
-            <TouchableOpacity
-              onPress={onClose}
-              style={[
-                TEAM_UI.chip,
-                {
-                  borderColor: COLORS.border,
-                  backgroundColor: COLORS.porcelainAlt,
-                },
-              ]}
-            >
-              <Text style={styles.cancelText}>Cancelar</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={onSave}
-              disabled={isSaving}
-              style={[
-                TEAM_UI.chip,
-                {
-                  borderColor: COLORS.rosegold,
-                  backgroundColor: "rgba(242, 198, 192, 0.25)",
-                  opacity: isSaving ? 0.7 : 1,
-                },
-              ]}
-            >
-              <Text style={styles.saveText}>
-                {isSaving ? "Guardando..." : "Guardar"}
-              </Text>
-            </TouchableOpacity>
+              <View style={styles.switchRow}>
+                <Text style={styles.switchLabel}>Activo</Text>
+                <Switch
+                  value={form.isActive}
+                  onValueChange={(value) => onUpdateForm({ isActive: value })}
+                  trackColor={{ false: COLORS.border, true: COLORS.rosegoldBright }}
+                  thumbColor={form.isActive ? COLORS.rosegold : COLORS.neutral}
+                />
+              </View>
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  onPress={onClose}
+                  style={[
+                    TEAM_UI.chip,
+                    {
+                      borderColor: COLORS.border,
+                      backgroundColor: COLORS.porcelainAlt,
+                    },
+                  ]}
+                >
+                  <Text style={styles.cancelText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={onSave}
+                  disabled={isSaving}
+                  style={[
+                    TEAM_UI.chip,
+                    {
+                      borderColor: COLORS.rosegold,
+                      backgroundColor: "rgba(242, 198, 192, 0.25)",
+                      opacity: isSaving ? 0.7 : 1,
+                    },
+                  ]}
+                >
+                  <Text style={styles.saveText}>{isSaving ? "Guardando..." : "Guardar"}</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
         </View>
 
@@ -232,11 +281,7 @@ export default function TeamEditModal({
               <TextInput
                 value={pickerQuery}
                 onChangeText={onSetPickerQuery}
-                placeholder={
-                  activePicker === "editRole"
-                    ? "Buscar rol..."
-                    : "Buscar sede..."
-                }
+                placeholder={activePicker === "editRole" ? "Buscar rol..." : "Buscar sede..."}
                 placeholderTextColor={COLORS.neutral}
                 style={styles.pickerSearchInput}
               />
@@ -256,10 +301,7 @@ export default function TeamEditModal({
                           onUpdateForm({ role: item.code });
                           onClosePicker();
                         }}
-                        style={[
-                          styles.pickerItem,
-                          active ? styles.pickerItemActive : null,
-                        ]}
+                        style={[styles.pickerItem, active ? styles.pickerItemActive : null]}
                       >
                         <Text style={styles.pickerItemTitle}>{item.name}</Text>
                       </TouchableOpacity>
@@ -276,10 +318,7 @@ export default function TeamEditModal({
                         onSetPrimarySite(site.id);
                         onClosePicker();
                       }}
-                      style={[
-                        styles.pickerItem,
-                        active ? styles.pickerItemActive : null,
-                      ]}
+                      style={[styles.pickerItem, active ? styles.pickerItemActive : null]}
                     >
                       <Text style={styles.pickerItemTitle}>{site.name}</Text>
                     </TouchableOpacity>
@@ -291,10 +330,7 @@ export default function TeamEditModal({
                   const isPrimary = form.primarySiteId === site.id;
                   return (
                     <View key={site.id} style={styles.siteRow}>
-                      <TouchableOpacity
-                        onPress={() => onToggleSite(site.id)}
-                        style={styles.siteRowLeft}
-                      >
+                      <TouchableOpacity onPress={() => onToggleSite(site.id)} style={styles.siteRowLeft}>
                         <Ionicons
                           name={selected ? "checkbox" : "square-outline"}
                           size={18}
@@ -311,9 +347,7 @@ export default function TeamEditModal({
                         <Ionicons
                           name={isPrimary ? "star" : "star-outline"}
                           size={18}
-                          color={
-                            isPrimary ? COLORS.rosegold : COLORS.neutral
-                          }
+                          color={isPrimary ? COLORS.rosegold : COLORS.neutral}
                         />
                       </TouchableOpacity>
                     </View>
@@ -332,8 +366,19 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.35)",
-    padding: 20,
+  },
+  modalOverlayCentered: {
     justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+  modalOverlayKeyboard: {
+    justifyContent: "flex-start",
+    paddingHorizontal: 20,
+  },
+  keyboardWrap: {
+    width: "100%",
+    maxWidth: MODAL_MAX_WIDTH,
+    alignSelf: "center",
   },
   modalCard: {
     backgroundColor: "white",
@@ -341,6 +386,9 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
+  },
+  scrollContent: {
+    paddingBottom: 4,
   },
   modalTitle: {
     fontSize: 16,
@@ -397,6 +445,7 @@ const styles = StyleSheet.create({
     gap: 10,
     justifyContent: "flex-end",
     marginTop: 16,
+    flexWrap: "wrap",
   },
   cancelText: {
     fontWeight: "700",

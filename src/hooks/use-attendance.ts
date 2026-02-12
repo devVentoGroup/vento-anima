@@ -778,7 +778,7 @@ export function useAttendance() {
         canProceed: false,
         mode,
         siteId,
-        message: "Verificando ubicacion...",
+        message: "Verificando ubicación...",
         updatedAt: now,
         requiresSelection: false,
         candidateSites: null,
@@ -796,7 +796,7 @@ export function useAttendance() {
           distanceMeters: null,
           accuracyMeters: null,
           effectiveRadiusMeters: null,
-          message: "No se pudo cargar la sede para verificar ubicacion",
+          message: "No se pudo cargar la sede para verificar ubicación",
           updatedAt: now,
           location: null,
           deviceInfo: null,
@@ -986,7 +986,7 @@ export function useAttendance() {
           effectiveRadiusMeters: effectiveRadius,
           message: `Estas a ${Math.round(distance)}m (precision ${Math.round(
             acc
-          )}m). Debes estar dentro de ${effectiveRadius}m con senal suficiente.`,
+          )}m). Debes estar dentro de ${effectiveRadius}m con señal suficiente.`,
           updatedAt: now,
           location,
           deviceInfo: buildDeviceInfoPayload(location, {
@@ -1144,7 +1144,7 @@ export function useAttendance() {
       return {
         success: false,
         error: offline
-          ? "Sin conexion. Intenta de nuevo."
+          ? "Sin conexión. Intenta de nuevo."
           : friendly ?? "Error al registrar entrada",
       }
     } finally {
@@ -1155,14 +1155,14 @@ export function useAttendance() {
 
   const checkOut = useCallback(async (): Promise<CheckInOutResult> => {
     if (!user || !employee) return { success: false, error: "No autenticado" }
-    if (!employee.isActive) return { success: false, error: "Tu cuenta esta inactiva" }
+    if (!employee.isActive) return { success: false, error: "Tu cuenta está inactiva" }
 
     const lastLog = await getLastAttendanceLog()
     if (!lastLog || lastLog.action !== "check_in") {
       return { success: false, error: "No hay check-in activo" }
     }
 
-    if (actionInFlightRef.current) return { success: false, error: "Accion en curso. Intenta de nuevo." }
+    if (actionInFlightRef.current) return { success: false, error: "Acción en curso. Intenta de nuevo." }
     actionInFlightRef.current = true
     setIsLoading(true)
 
@@ -1172,7 +1172,7 @@ export function useAttendance() {
       const geo = await refreshGeofence({ force: true, mode: "check_out", siteId: siteIdToClose })
       if (!geo.canProceed) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-        return { success: false, error: geo.message || "Ubicacion no verificada" }
+        return { success: false, error: geo.message || "Ubicación no verificada" }
       }
 
       const location = geo.location
@@ -1211,7 +1211,7 @@ export function useAttendance() {
       return {
         success: false,
         error: offline
-          ? "Sin conexion. Intenta de nuevo."
+          ? "Sin conexión. Intenta de nuevo."
           : friendly ?? "Error al registrar salida",
       }
     } finally {

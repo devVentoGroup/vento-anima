@@ -1,4 +1,4 @@
-import * as Location from "expo-location"
+﻿import * as Location from "expo-location"
 import * as Device from "expo-device"
 import { Platform } from "react-native"
 
@@ -53,11 +53,11 @@ const VALIDATION_CONFIG = {
   locationTimeoutMs: 15000,
 }
 
-// ✅ Política estricta para asistencia (check-in)
+//  Política estricta para asistencia (check-in)
 const CHECKIN_POLICY = {
-  // Recomendado para “estricto pero usable”
+  // Recomendado para "estricto pero usable"
   maxAccuracyMeters: 25,
-  // Cap duro para evitar radios enormes que permiten “media cuadra”
+  // Cap duro para evitar radios enormes que permiten "media cuadra"
   radiusCapMeters: 35,
   // Muestras para estabilizar lectura
   samples: 4,
@@ -113,7 +113,7 @@ export function buildValidatedLocationFromRaw(
   const isMocked =
     (rawLocation as any).mocked === true || (rawLocation.coords as any).mocked === true
   if (isMocked) {
-    spoofingWarnings.push("Ubicacion simulada (mock) detectada por el sistema")
+    spoofingWarnings.push("ubicación simulada (mock) detectada por el sistema")
   }
 
   const speed = rawLocation.coords.speed
@@ -259,7 +259,7 @@ export async function getValidatedLocation(opts?: {
     if (status !== "granted") {
       return {
         success: false,
-        error: "Permiso de ubicacion denegado. Activa la ubicacion para hacer check-in.",
+        error: "Permiso de ubicación denegado. Activa la ubicación para hacer check-in.",
         errorCode: "PERMISSION_DENIED",
       }
     }
@@ -268,7 +268,7 @@ export async function getValidatedLocation(opts?: {
     if (!isEnabled) {
       return {
         success: false,
-        error: "Los servicios de ubicacion estan desactivados. Activalos en configuracion.",
+        error: "Los servicios de ubicación están desactivados. Activalos en configuracion.",
         errorCode: "LOCATION_UNAVAILABLE",
       }
     }
@@ -314,14 +314,14 @@ export async function getValidatedLocation(opts?: {
         if (bestAccuracy <= maxAccuracyMeters) break
       }
 
-      // Pequeña pausa para que el GPS “converja”
+      // Pequeña pausa para que el GPS "converja"
       if (i < samples - 1) await sleep(700)
     }
 
     if (!best) {
       return {
         success: false,
-        error: "No se pudo obtener la ubicacion. Intenta en un lugar con mejor senal GPS.",
+        error: "No se pudo obtener la ubicación. Intenta en un lugar con mejor señal GPS.",
         errorCode: "TIMEOUT",
       }
     }
@@ -332,7 +332,7 @@ export async function getValidatedLocation(opts?: {
     if (accuracy > maxAccuracyMeters) {
       return {
         success: false,
-        error: `Ubicacion imprecisa (${Math.round(accuracy)}m). Sal al exterior o espera a mejor senal GPS.`,
+        error: `ubicación imprecisa (${Math.round(accuracy)}m). Sal al exterior o espera a mejor señal GPS.`,
         errorCode: "ACCURACY_TOO_LOW",
       }
     }
@@ -341,7 +341,7 @@ export async function getValidatedLocation(opts?: {
     if (locationAge > VALIDATION_CONFIG.maxLocationAgeMs) {
       return {
         success: false,
-        error: "La ubicacion es antigua. Espera a que se actualice tu GPS.",
+        error: "La ubicación es antigua. Espera a que se actualice tu GPS.",
         errorCode: "LOCATION_UNAVAILABLE",
       }
     }
@@ -350,7 +350,7 @@ export async function getValidatedLocation(opts?: {
       rawLocation.coords.latitude,
       rawLocation.coords.longitude
     )
-    // ✅ Señal fuerte en Android cuando el OS marca ubicación simulada
+    //  Señal fuerte en Android cuando el OS marca Ubicación simulada
     const isMocked =
       (rawLocation as any).mocked === true || (rawLocation.coords as any).mocked === true
     if (isMocked) {
@@ -384,7 +384,7 @@ export async function getValidatedLocation(opts?: {
     if (hasBlockingWarnings) {
       return {
         success: false,
-        error: "Ubicacion no valida. Asegurate de usar tu ubicacion real.",
+        error: "ubicación no valida. Asegúrate de usar tu ubicación real.",
         errorCode: "SPOOFING_DETECTED",
         location: validatedLocation,
       }
@@ -398,7 +398,7 @@ export async function getValidatedLocation(opts?: {
     console.error("Error getting location:", error)
     return {
       success: false,
-      error: "Error al obtener ubicacion. Intenta de nuevo.",
+      error: "Error al obtener ubicación. Intenta de nuevo.",
       errorCode: "UNKNOWN",
     }
   }
@@ -445,8 +445,8 @@ export async function validateCheckInLocation(
 
   const accuracy = locationResult.location.accuracy ?? 999
 
-  // ✅ Regla estricta: solo aceptamos si estamos “confiablemente” dentro del radio
-  // (si el GPS tiene 25m de error, no aceptamos un “estoy a 20m” sin margen)
+  //  Regla estricta: solo aceptamos si estamos "confiablemente" dentro del radio
+  // (si el GPS tiene 25m de error, no aceptamos un "estoy a 20m" sin margen)
   const isWithinStrict = distanceMeters + accuracy <= effectiveRadius
 
   if (!isWithinStrict) {
@@ -454,7 +454,7 @@ export async function validateCheckInLocation(
     const a = Math.round(accuracy)
     return {
       canCheckIn: false,
-      error: `Estás a ${d}m de ${site.name} (precisión GPS: ${a}m). Debes estar dentro de ${effectiveRadius}m con precisión suficiente.`,
+      error: `estás a ${d}m de ${site.name} (precisión GPS: ${a}m). Debes estar dentro de ${effectiveRadius}m con precisión suficiente.`,
       location: locationResult.location,
       distanceMeters: d,
     }
@@ -467,3 +467,5 @@ export async function validateCheckInLocation(
   }
 
 }
+
+

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+﻿import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -106,7 +106,7 @@ export function DeleteAccountFlow({
 
             <View style={styles.switchRow}>
               <Switch value={irreversibleChecked} onValueChange={setIrreversibleChecked} />
-              <Text style={styles.switchText}>Entiendo que esta accion es irreversible tras 30 dias.</Text>
+              <Text style={styles.switchText}>Entiendo que esta acción es irreversible tras 30 dias.</Text>
             </View>
           </View>
 
@@ -236,3 +236,4 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 });
+

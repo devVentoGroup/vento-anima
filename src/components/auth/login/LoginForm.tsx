@@ -26,7 +26,6 @@ type LoginFormProps = {
   onPasswordChange: (value: string) => void;
   onToggleShowPassword: () => void;
   onSubmit: () => void;
-  onInvitePress: () => void;
   onForgotPasswordPress: () => void;
 };
 
@@ -43,7 +42,6 @@ export default function LoginForm({
   onPasswordChange,
   onToggleShowPassword,
   onSubmit,
-  onInvitePress,
   onForgotPasswordPress,
 }: LoginFormProps) {
   const [emailFocused, setEmailFocused] = useState(false);
@@ -149,10 +147,6 @@ export default function LoginForm({
 
         <TouchableOpacity onPress={onForgotPasswordPress} style={styles.inviteLink}>
           <Text style={styles.inviteLinkText}>¿Olvidaste tu contraseña?</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={onInvitePress} style={styles.inviteLink}>
-          <Text style={styles.inviteLinkText}>Tengo una invitación</Text>
         </TouchableOpacity>
 
         <Text style={styles.footerNote}>

@@ -1,8 +1,10 @@
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -10,6 +12,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native"
 import { useFocusEffect } from "@react-navigation/native"
@@ -17,6 +20,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { Ionicons } from "@expo/vector-icons"
 
 import { COLORS } from "@/constants/colors"
+import {
+  CONTENT_HORIZONTAL_PADDING,
+  CONTENT_MAX_WIDTH,
+  MODAL_MAX_WIDTH,
+} from "@/constants/layout"
 import { supabase } from "@/lib/supabase"
 import { useAuth } from "@/contexts/auth-context"
 import { ANNOUNCEMENTS } from "@/components/announcements/data"
@@ -68,6 +76,7 @@ const mapRowToAnnouncement = (row: AnnouncementRow): Announcement => ({
 
 export default function AnnouncementsScreen() {
   const insets = useSafeAreaInsets()
+  const { height: windowHeight } = useWindowDimensions()
   const { employee } = useAuth()
   const [items, setItems] = useState<Announcement[]>(ANNOUNCEMENTS)
   const [isLoading, setIsLoading] = useState(true)
@@ -81,6 +90,13 @@ export default function AnnouncementsScreen() {
     tag: "INFO",
   })
   const [source, setSource] = useState<"remote" | "fallback">("fallback")
+  const [keyboardHeight, setKeyboardHeight] = useState(0)
+  const isKeyboardVisible = keyboardHeight > 0
+  const modalTopGap = Math.max(14, insets.top + 8)
+  const modalBottomGap = 20
+  const modalMaxHeight = isKeyboardVisible
+    ? Math.max(220, windowHeight - keyboardHeight - modalTopGap - modalBottomGap)
+    : Math.max(320, windowHeight - modalBottomGap * 2)
   const canManageAnnouncements = useMemo(() => {
     const role = employee?.role ?? null
     return (
@@ -247,7 +263,7 @@ export default function AnnouncementsScreen() {
     if (!canManageAnnouncements) return
     Alert.alert(
       "Eliminar novedad",
-      "Esta accion no se puede deshacer.",
+      "Esta acción no se puede deshacer.",
       [
         { text: "Cancelar", style: "cancel" },
         {
@@ -275,11 +291,33 @@ export default function AnnouncementsScreen() {
     )
   }
 
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow"
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide"
+
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates.height)
+    })
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0)
+    })
+
+    return () => {
+      showSub.remove()
+      hideSub.remove()
+    }
+  }, [])
+
   return (
     <View style={styles.root}>
       <ScrollView
         contentContainerStyle={{
-          paddingHorizontal: 20,
+          alignSelf: "center",
+          width: "100%",
+          maxWidth: CONTENT_MAX_WIDTH,
+          paddingHorizontal: CONTENT_HORIZONTAL_PADDING,
           paddingTop: Math.max(16, insets.top + 8),
           paddingBottom: 40,
         }}
@@ -344,61 +382,75 @@ export default function AnnouncementsScreen() {
       </ScrollView>
 
       <Modal transparent visible={isFormOpen} animationType="fade">
-        <Pressable style={styles.modalOverlay} onPress={closeForm}>
-          <Pressable
-            style={styles.modalCard}
-            onPress={(event) => event.stopPropagation()}
-          >
-            <Text style={styles.modalTitle}>
-              {editingId ? "Editar novedad" : "Nueva novedad"}
-            </Text>
-            <TextInput
-              value={form.title}
-              onChangeText={(value) => setForm((prev) => ({ ...prev, title: value }))}
-              placeholder="Titulo"
-              placeholderTextColor={COLORS.neutral}
-              style={styles.input}
-            />
-            <TextInput
-              value={form.body}
-              onChangeText={(value) => setForm((prev) => ({ ...prev, body: value }))}
-              placeholder="Contenido"
-              placeholderTextColor={COLORS.neutral}
-              multiline
-              style={[styles.input, styles.multilineInput]}
-            />
-            <View style={styles.tagsRow}>
-              {TAG_OPTIONS.map((tag) => {
-                const active = form.tag === tag
-                return (
-                  <TouchableOpacity
-                    key={tag}
-                    onPress={() => setForm((prev) => ({ ...prev, tag }))}
-                    style={[
-                      ANNOUNCEMENTS_UI.tag,
-                      active ? styles.tagActive : styles.tagInactive,
-                    ]}
-                  >
-                    <Text style={active ? styles.tagTextActive : styles.tagTextInactive}>
-                      {tag}
-                    </Text>
-                  </TouchableOpacity>
-                )
-              })}
-            </View>
-            <View style={styles.modalActions}>
-              <TouchableOpacity onPress={closeForm} style={[ANNOUNCEMENTS_UI.tag, styles.cancelChip]}>
-                <Text style={styles.cancelText}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleSave}
-                disabled={isSaving}
-                style={[ANNOUNCEMENTS_UI.tag, styles.saveChip, isSaving ? styles.saveChipDisabled : null]}
+        <Pressable
+          style={[
+            styles.modalOverlay,
+            isKeyboardVisible ? styles.modalOverlayKeyboard : styles.modalOverlayCentered,
+            { paddingTop: isKeyboardVisible ? modalTopGap : 20, paddingBottom: 20 },
+          ]}
+          onPress={closeForm}
+        >
+          <View style={styles.keyboardWrap}>
+            <Pressable
+              style={[styles.modalCard, { maxHeight: modalMaxHeight }]}
+              onPress={(event) => event.stopPropagation()}
+            >
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.modalScrollContent}
               >
-                <Text style={styles.saveText}>{isSaving ? "Guardando..." : "Guardar"}</Text>
-              </TouchableOpacity>
-            </View>
-          </Pressable>
+                <Text style={styles.modalTitle}>
+                  {editingId ? "Editar novedad" : "Nueva novedad"}
+                </Text>
+                <TextInput
+                  value={form.title}
+                  onChangeText={(value) => setForm((prev) => ({ ...prev, title: value }))}
+                  placeholder="Titulo"
+                  placeholderTextColor={COLORS.neutral}
+                  style={styles.input}
+                />
+                <TextInput
+                  value={form.body}
+                  onChangeText={(value) => setForm((prev) => ({ ...prev, body: value }))}
+                  placeholder="Contenido"
+                  placeholderTextColor={COLORS.neutral}
+                  multiline
+                  style={[styles.input, styles.multilineInput]}
+                />
+                <View style={styles.tagsRow}>
+                  {TAG_OPTIONS.map((tag) => {
+                    const active = form.tag === tag
+                    return (
+                      <TouchableOpacity
+                        key={tag}
+                        onPress={() => setForm((prev) => ({ ...prev, tag }))}
+                        style={[
+                          ANNOUNCEMENTS_UI.tag,
+                          active ? styles.tagActive : styles.tagInactive,
+                        ]}
+                      >
+                        <Text style={active ? styles.tagTextActive : styles.tagTextInactive}>
+                          {tag}
+                        </Text>
+                      </TouchableOpacity>
+                    )
+                  })}
+                </View>
+                <View style={styles.modalActions}>
+                  <TouchableOpacity onPress={closeForm} style={[ANNOUNCEMENTS_UI.tag, styles.cancelChip]}>
+                    <Text style={styles.cancelText}>Cancelar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={handleSave}
+                    disabled={isSaving}
+                    style={[ANNOUNCEMENTS_UI.tag, styles.saveChip, isSaving ? styles.saveChipDisabled : null]}
+                  >
+                    <Text style={styles.saveText}>{isSaving ? "Guardando..." : "Guardar"}</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            </Pressable>
+          </View>
         </Pressable>
       </Modal>
     </View>
@@ -485,8 +537,19 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.35)",
+  },
+  modalOverlayCentered: {
     justifyContent: "center",
-    padding: 20,
+    paddingHorizontal: 20,
+  },
+  modalOverlayKeyboard: {
+    justifyContent: "flex-start",
+    paddingHorizontal: 20,
+  },
+  keyboardWrap: {
+    width: "100%",
+    maxWidth: MODAL_MAX_WIDTH,
+    alignSelf: "center",
   },
   modalCard: {
     backgroundColor: COLORS.white,
@@ -494,6 +557,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     padding: 16,
+  },
+  modalScrollContent: {
+    paddingBottom: 4,
   },
   modalTitle: {
     fontSize: 16,
@@ -541,6 +607,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "flex-end",
     gap: 8,
+    flexWrap: "wrap",
   },
   cancelChip: {
     borderColor: COLORS.border,

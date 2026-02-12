@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
+import { CONTENT_HORIZONTAL_PADDING, CONTENT_MAX_WIDTH } from "@/constants/layout";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
 import TeamEmptyState from "@/components/team/TeamEmptyState";
@@ -664,7 +665,10 @@ export default function TeamScreen() {
     <View style={styles.root}>
       <ScrollView
         contentContainerStyle={{
-          paddingHorizontal: 20,
+          alignSelf: "center",
+          width: "100%",
+          maxWidth: CONTENT_MAX_WIDTH,
+          paddingHorizontal: CONTENT_HORIZONTAL_PADDING,
           paddingTop: Math.max(16, insets.top + 8),
           paddingBottom: Math.max(24, insets.bottom + 24),
         }}
@@ -895,5 +899,4 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
 });
-
 
