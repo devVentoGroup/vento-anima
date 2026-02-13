@@ -8,6 +8,8 @@
   "routes": [
     { "src": "/api/set-password", "dest": "/api/set-password.js" },
     { "src": "/api/request-password", "dest": "/api/request-password.js" },
-    { "src": "/privacy-policy/?", "dest": "/public/privacy-policy.html" }
+    { "src": "/privacy-policy/?", "dest": "/public/privacy-policy.html" },
+    { "src": "/delete-account/?", "dest": "/public/delete-account.html" },
+    { "src": "/eliminar-cuenta/?", "dest": "/public/delete-account.html" }
   ]
 }

@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Eliminar cuenta | ANIMA</title>
+    <meta
+      name="description"
+      content="Información oficial para eliminar tu cuenta de ANIMA y conocer qué datos se eliminan o se conservan."
+    />
+    <style>
+      :root {
+        --bg: #fdf7fa;
+        --card: #ffffff;
+        --card-soft: #fff1f7;
+        --text: #1f1a22;
+        --text-soft: #6f6574;
+        --brand: #e2006a;
+        --brand-dark: #b00053;
+        --brand-soft: #ffd4e8;
+        --line: #ecd8e3;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        font-family: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(1000px 520px at 100% -10%, rgba(226, 0, 106, 0.15), transparent 58%),
+          radial-gradient(800px 380px at -10% 0%, rgba(226, 0, 106, 0.08), transparent 60%),
+          var(--bg);
+      }
+
+      .wrap {
+        width: min(980px, 94%);
+        margin: 0 auto;
+        padding: 34px 0 58px;
+      }
+
+      .hero {
+        background: linear-gradient(140deg, #4b1530 0%, #7a1144 45%, #e2006a 100%);
+        color: #fff7fb;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 26px;
+        padding: 30px 26px;
+        box-shadow: 0 24px 52px rgba(122, 17, 68, 0.26);
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        letter-spacing: 0.35px;
+        text-transform: uppercase;
+        font-weight: 800;
+        color: #5a1234;
+        background: linear-gradient(90deg, #ffd4e8, #fff0f7);
+        border-radius: 999px;
+        padding: 7px 12px;
+      }
+
+      .hero h1 {
+        margin: 16px 0 10px;
+        font-size: clamp(30px, 4vw, 44px);
+        line-height: 1.06;
+        letter-spacing: -0.02em;
+      }
+
+      .hero p {
+        margin: 0;
+        max-width: 780px;
+        color: rgba(255, 247, 251, 0.94);
+        font-size: 16px;
+        line-height: 1.65;
+      }
+
+      .meta {
+        margin-top: 16px;
+        color: rgba(255, 247, 251, 0.82);
+        font-size: 14px;
+      }
+
+      .grid {
+        margin-top: 22px;
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .card {
+        grid-column: span 12;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 22px;
+        box-shadow: 0 12px 34px rgba(37, 14, 29, 0.07);
+      }
+
+      .card h2 {
+        margin: 0 0 10px;
+        font-size: 20px;
+        line-height: 1.2;
+        color: #3d1730;
+      }
+
+      .card p, .card li {
+        margin: 0;
+        line-height: 1.7;
+        font-size: 15px;
+        color: #4f4150;
+      }
+
+      .card p + p, .card ul, .card ol { margin-top: 10px; }
+      .card ul, .card ol { padding-left: 20px; }
+
+      .soft {
+        background: var(--card-soft);
+        border: 1px solid var(--brand-soft);
+      }
+
+      .highlight {
+        border-left: 5px solid var(--brand);
+        background: #fff5fa;
+      }
+
+      .contact {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: #ffffff;
+        font-size: 14px;
+        color: #3d1730;
+        text-decoration: none;
+        font-weight: 700;
+      }
+
+      .chip.primary {
+        border-color: rgba(226, 0, 106, 0.35);
+        background: linear-gradient(90deg, #ffe1ef, #fff4f9);
+        color: var(--brand-dark);
+      }
+
+      a { color: var(--brand-dark); }
+
+      footer {
+        margin-top: 18px;
+        color: var(--text-soft);
+        text-align: center;
+        font-size: 13px;
+      }
+
+      @media (min-width: 860px) {
+        .card.span-7 { grid-column: span 7; }
+        .card.span-5 { grid-column: span 5; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="hero" aria-label="Encabezado de eliminación de cuenta">
+        <span class="badge">ANIMA • Eliminación de cuenta</span>
+        <h1>Eliminar cuenta y datos personales en ANIMA</h1>
+        <p>
+          Esta página describe el proceso de eliminación de cuenta en ANIMA, incluyendo pasos, tiempos de ejecución y
+          tratamiento de datos personales asociados.
+        </p>
+        <p class="meta">Última actualización: 13 de febrero de 2026</p>
+      </section>
+
+      <section class="grid" aria-label="Contenido de eliminación de cuenta">
+        <article class="card span-7">
+          <h2>1. Cómo eliminar tu cuenta desde la app</h2>
+          <ol>
+            <li>Inicia sesión en ANIMA con tu usuario autorizado.</li>
+            <li>Ve a <strong>Configuración y privacidad</strong>.</li>
+            <li>Abre la sección <strong>Eliminar cuenta</strong>.</li>
+            <li>Completa la verificación solicitada y confirma la acción irreversible.</li>
+            <li>Confirma para ejecutar la eliminación inmediata.</li>
+          </ol>
+          <p>
+            Una vez completado el proceso, tu sesión se cierra y la cuenta queda inhabilitada para nuevos accesos.
+          </p>
+        </article>
+
+        <article class="card span-5 soft">
+          <h2>2. Solicitud alternativa</h2>
+          <p>
+            Si no puedes ingresar a la app, puedes solicitar la eliminación escribiendo a
+            <a href="mailto:soporte@ventogroup.co">soporte@ventogroup.co</a> desde tu correo corporativo asociado.
+          </p>
+        </article>
+
+        <article class="card highlight">
+          <h2>3. Qué datos se eliminan o se conservan</h2>
+          <p>Después de eliminar la cuenta:</p>
+          <ul>
+            <li>Se revoca el acceso y se cierran sesiones activas.</li>
+            <li>Se eliminan o anonimizan datos personales de identificación.</li>
+            <li>
+              Se pueden conservar registros operativos y de auditoría sin datos personales directos, cuando exista
+              obligación legal o necesidad de seguridad del servicio.
+            </li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h2>4. Política de privacidad y contacto</h2>
+          <p>
+            Para más detalles sobre tratamiento de datos en ANIMA, consulta:
+            <a href="/privacy-policy">/privacy-policy</a>.
+          </p>
+          <div class="contact">
+            <a class="chip primary" href="mailto:soporte@ventogroup.co">soporte@ventogroup.co</a>
+            <span class="chip">Vento Group • ANIMA</span>
+          </div>
+        </article>
+      </section>
+
+      <footer>
+        © Vento Group. ANIMA. Todos los derechos reservados.
+      </footer>
+    </main>
+  </body>
+</html>
