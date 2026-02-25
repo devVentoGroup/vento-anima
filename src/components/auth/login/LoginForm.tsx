@@ -20,7 +20,7 @@ type LoginFormProps = {
   loading: boolean;
   errorMsg: string | null;
   canSubmit: boolean;
-  passwordRef: RefObject<RNTextInput>;
+  passwordRef: RefObject<RNTextInput | null>;
   cardStyle: Record<string, unknown>;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;

@@ -20,7 +20,11 @@ import HistoryEmptyState from "@/components/history/HistoryEmptyState";
 import HistoryDetailModal from "@/components/history/HistoryDetailModal";
 import HistoryIncidentModal from "@/components/history/HistoryIncidentModal";
 import { HISTORY_UI } from "@/components/history/ui";
-import type { AttendanceLog, DerivedLog } from "@/components/history/types";
+import type {
+  AttendanceBreak,
+  AttendanceLog,
+  DerivedLog,
+} from "@/components/history/types";
 
 type RangeMode = "week" | "month";
 
@@ -42,7 +46,7 @@ function formatDayLabel(value: string) {
     month: "long",
     year: "numeric",
   });
-  return `${prettyDay} · ${prettyDate}`;
+  return `${prettyDay} - ${prettyDate}`;
 }
 
 function formatDuration(minutes: number | null) {
@@ -52,6 +56,29 @@ function formatDuration(minutes: number | null) {
   const mins = total % 60;
   if (hours <= 0) return `${mins} min`;
   return `${hours}h ${mins.toString().padStart(2, "0")}m`;
+}
+
+function overlapMinutes(
+  intervalStartMs: number,
+  intervalEndMs: number,
+  breaks: AttendanceBreak[],
+) {
+  if (intervalEndMs <= intervalStartMs) return 0;
+  let total = 0;
+
+  breaks.forEach((item) => {
+    const breakStart = new Date(item.started_at).getTime();
+    const breakEnd = new Date(item.ended_at ?? new Date().toISOString()).getTime();
+    if (!Number.isFinite(breakStart) || !Number.isFinite(breakEnd)) return;
+
+    const start = Math.max(intervalStartMs, breakStart);
+    const end = Math.min(intervalEndMs, breakEnd);
+    if (end > start) {
+      total += (end - start) / 60000;
+    }
+  });
+
+  return total;
 }
 
 function getRange(anchor: Date, mode: RangeMode) {
@@ -128,19 +155,34 @@ export default function HistoryScreen() {
     setIsLoading(true);
 
     try {
-      const { data, error } = await supabase
-        .from("attendance_logs")
-        .select(
-          "id, action, occurred_at, site_id, latitude, longitude, accuracy_meters, notes, sites(name)",
-        )
-        .eq("employee_id", user.id)
-        .gte("occurred_at", range.start.toISOString())
-        .lte("occurred_at", range.end.toISOString())
-        .order("occurred_at", { ascending: true });
+      const startIso = range.start.toISOString();
+      const endIso = range.end.toISOString();
 
-      if (error) throw error;
+      const [{ data: logsData, error: logsError }, { data: breaksData, error: breaksError }] =
+        await Promise.all([
+          supabase
+            .from("attendance_logs")
+            .select(
+              "id, action, occurred_at, site_id, latitude, longitude, accuracy_meters, notes, sites(name)",
+            )
+            .eq("employee_id", user.id)
+            .gte("occurred_at", startIso)
+            .lte("occurred_at", endIso)
+            .order("occurred_at", { ascending: true }),
+          supabase
+            .from("attendance_breaks")
+            .select("started_at, ended_at")
+            .eq("employee_id", user.id)
+            .lte("started_at", endIso)
+            .or(`ended_at.is.null,ended_at.gte.${startIso}`)
+            .order("started_at", { ascending: true }),
+        ]);
 
-      const logs = (data ?? []) as AttendanceLog[];
+      if (logsError) throw logsError;
+      if (breaksError) throw breaksError;
+
+      const logs = (logsData ?? []) as AttendanceLog[];
+      const breaks = (breaksData ?? []) as AttendanceBreak[];
       const derived: DerivedLog[] = [];
       let pendingIndex: number | null = null;
 
@@ -152,6 +194,7 @@ export default function HistoryScreen() {
               ...derived[pendingIndex],
               statusLabel: "Sin salida",
               durationMinutes: null,
+              breakMinutes: null,
             };
           }
           const index = derived.length;
@@ -160,6 +203,7 @@ export default function HistoryScreen() {
             dayKey,
             statusLabel: "En curso",
             durationMinutes: null,
+            breakMinutes: null,
           });
           pendingIndex = index;
           return;
@@ -169,19 +213,23 @@ export default function HistoryScreen() {
           const pending = derived[pendingIndex];
           const start = new Date(pending.occurred_at).getTime();
           const end = new Date(log.occurred_at).getTime();
-          const minutes = (end - start) / 60000;
+          const grossMinutes = (end - start) / 60000;
+          const breakMinutes = overlapMinutes(start, end, breaks);
+          const netMinutes = Math.max(0, grossMinutes - breakMinutes);
 
           derived[pendingIndex] = {
             ...pending,
             statusLabel: "Salida registrada",
-            durationMinutes: minutes,
+            durationMinutes: netMinutes,
+            breakMinutes,
           };
 
           derived.push({
             ...log,
             dayKey,
             statusLabel: "Turno cerrado",
-            durationMinutes: minutes,
+            durationMinutes: netMinutes,
+            breakMinutes,
           });
 
           pendingIndex = null;
@@ -193,6 +241,7 @@ export default function HistoryScreen() {
           dayKey,
           statusLabel: "Sin entrada",
           durationMinutes: null,
+          breakMinutes: null,
         });
       });
 
@@ -200,11 +249,14 @@ export default function HistoryScreen() {
         const pending = derived[pendingIndex];
         const start = new Date(pending.occurred_at).getTime();
         const now = Date.now();
-        const minutes = (now - start) / 60000;
+        const grossMinutes = (now - start) / 60000;
+        const breakMinutes = overlapMinutes(start, now, breaks);
+        const netMinutes = Math.max(0, grossMinutes - breakMinutes);
         derived[pendingIndex] = {
           ...pending,
           statusLabel: "En curso",
-          durationMinutes: minutes,
+          durationMinutes: netMinutes,
+          breakMinutes,
         };
       }
 
@@ -478,10 +530,8 @@ export default function HistoryScreen() {
                         }}
                       />
                     ) : null}
-                    <View
-                      style={{ flexDirection: "row", alignItems: "center" }}
-                    >
-                      <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
+                      <View style={{ flex: 1, paddingRight: 10 }}>
                         <View
                           style={{
                             flexDirection: "row",
@@ -506,7 +556,7 @@ export default function HistoryScreen() {
                               fontVariant: ["tabular-nums"],
                             }}
                           >
-                            {actionLabel} · {formatHour(item.occurred_at)}
+                            {actionLabel} - {formatHour(item.occurred_at)}
                           </Text>
                         </View>
                         <Text
@@ -528,6 +578,8 @@ export default function HistoryScreen() {
                             gap: 6,
                             borderColor: st.border,
                             backgroundColor: st.bg,
+                            maxWidth: "46%",
+                            alignSelf: "flex-start",
                           },
                         ]}
                       >
@@ -537,6 +589,7 @@ export default function HistoryScreen() {
                             fontSize: 11,
                             fontWeight: "800",
                             color: st.tone,
+                            flexShrink: 1,
                           }}
                         >
                           {item.statusLabel}
@@ -544,28 +597,56 @@ export default function HistoryScreen() {
                       </View>
                     </View>
 
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        marginTop: 10,
-                      }}
-                    >
-                      <Text
-                        style={{ fontSize: 12, color: COLORS.neutral, flex: 1 }}
-                      >
-                        Duración del turno
-                      </Text>
-                      <Text
+                    <View style={{ marginTop: 10 }}>
+                      <View
                         style={{
-                          fontSize: 13,
-                          fontWeight: "800",
-                          color: COLORS.text,
-                          fontVariant: ["tabular-nums"],
+                          flexDirection: "row",
+                          alignItems: "center",
                         }}
                       >
-                        {formatDuration(item.durationMinutes)}
-                      </Text>
+                        <Text
+                          style={{ fontSize: 12, color: COLORS.neutral, flex: 1 }}
+                        >
+                          Duracion neta del turno
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: 13,
+                            fontWeight: "800",
+                            color: COLORS.text,
+                            fontVariant: ["tabular-nums"],
+                            marginLeft: 8,
+                          }}
+                        >
+                          {formatDuration(item.durationMinutes)}
+                        </Text>
+                      </View>
+                      {item.breakMinutes != null ? (
+                        <View
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "center",
+                            marginTop: 6,
+                          }}
+                        >
+                          <Text
+                            style={{ fontSize: 12, color: COLORS.neutral, flex: 1 }}
+                          >
+                            Descanso
+                          </Text>
+                          <Text
+                            style={{
+                              fontSize: 12,
+                              fontWeight: "700",
+                              color: COLORS.neutral,
+                              fontVariant: ["tabular-nums"],
+                              marginLeft: 8,
+                            }}
+                          >
+                            {formatDuration(item.breakMinutes)}
+                          </Text>
+                        </View>
+                      ) : null}
                     </View>
 
                     <View
@@ -613,6 +694,7 @@ export default function HistoryScreen() {
                           {
                             borderColor: COLORS.rosegold,
                             backgroundColor: "rgba(242, 198, 192, 0.2)",
+                            flex: 1,
                           },
                         ]}
                       >
@@ -714,3 +796,6 @@ const styles = StyleSheet.create({
     color: COLORS.accent,
   },
 });
+
+
+

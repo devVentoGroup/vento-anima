@@ -1,6 +1,6 @@
 {
   "name": "anima",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "ANIMA - Control de Asistencia",
   "main": "expo-router/entry",
   "scripts": {
@@ -10,11 +10,12 @@
     "web": "expo start --web"
   },
   "dependencies": {
-    "@react-native-community/datetimepicker": "^8.6.0",
-    "@react-navigation/native": "^7.1.28",
+    "@react-native-community/datetimepicker": "8.4.4",
+    "@react-navigation/native": "^7.1.8",
     "@supabase/supabase-js": "^2.91.0",
     "babel-preset-expo": "^54.0.10",
-    "expo": "~54.0.31",
+    "expo": "~54.0.33",
+    "expo-constants": "~18.0.13",
     "expo-dev-client": "~6.0.20",
     "expo-device": "^8.0.10",
     "expo-document-picker": "~14.0.8",
@@ -25,7 +26,7 @@
     "expo-location": "^19.0.8",
     "expo-mail-composer": "^15.0.8",
     "expo-notifications": "~0.32.16",
-    "expo-router": "~6.0.21",
+    "expo-router": "~6.0.23",
     "expo-secure-store": "^15.0.8",
     "expo-sharing": "^14.0.8",
     "expo-splash-screen": "^31.0.13",
@@ -34,7 +35,7 @@
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
-    "react-native-calendars": "^1.1313.0",
+    "react-native-calendars": "^1.1314.0",
     "react-native-gesture-handler": "~2.28.0",
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",

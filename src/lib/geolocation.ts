@@ -57,8 +57,6 @@ const VALIDATION_CONFIG = {
 const CHECKIN_POLICY = {
   // Recomendado para "estricto pero usable"
   maxAccuracyMeters: 25,
-  // Cap duro para evitar radios enormes que permiten "media cuadra"
-  radiusCapMeters: 35,
   // Muestras para estabilizar lectura
   samples: 4,
   // Timeout total para conseguir una lectura decente
@@ -434,7 +432,15 @@ export async function validateCheckInLocation(
     }
   }
 
-  const effectiveRadius = Math.min(site.radiusMeters, CHECKIN_POLICY.radiusCapMeters)
+  const effectiveRadius = Number(site.radiusMeters)
+  if (!Number.isFinite(effectiveRadius) || effectiveRadius <= 0) {
+    return {
+      canCheckIn: false,
+      error: `La sede ${site.name} no tiene radio de check-in configurado.`,
+      location: locationResult.location,
+      distanceMeters: undefined,
+    }
+  }
 
   const distanceMeters = calculateDistance(
     locationResult.location.latitude,

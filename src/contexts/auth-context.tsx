@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { createContext, useContext, useEffect, useRef, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react"
 import {
   ActivityIndicator,
   AppState,
@@ -44,15 +44,39 @@ interface AuthContextType {
   employee: Employee | null
   employeeSites: EmployeeSite[]
   selectedSiteId: string | null
+  hasPendingSiteChanges: boolean
   isLoading: boolean
   signIn: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
   refreshEmployee: () => Promise<void>
+  consumePendingSiteChanges: () => void
   setSelectedSite: (siteId: string | null) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 const EXPO_PROJECT_ID = "2e1ba93a-039d-49e7-962d-a33ea7eaf9b3"
+const SIGN_IN_MIN_INTERVAL_MS = 2500
+
+function parseRetryAfterSeconds(input: unknown): number {
+  const anyErr = input as any
+  const message = String(anyErr?.message ?? "").toLowerCase()
+  const fromField = Number(anyErr?.retry_after_seconds)
+  if (Number.isFinite(fromField) && fromField > 0) {
+    return Math.ceil(fromField)
+  }
+
+  const secondsMatch = message.match(/(\d+)\s*(seconds|second|secs|sec|s)\b/)
+  if (secondsMatch) {
+    return Math.max(1, Number(secondsMatch[1]))
+  }
+
+  const minutesMatch = message.match(/(\d+)\s*(minutes|minute|mins|min|m)\b/)
+  if (minutesMatch) {
+    return Math.max(1, Number(minutesMatch[1]) * 60)
+  }
+
+  return 0
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
@@ -60,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [employee, setEmployee] = useState<Employee | null>(null)
   const [employeeSites, setEmployeeSites] = useState<EmployeeSite[]>([])
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null)
+  const [hasPendingSiteChanges, setHasPendingSiteChanges] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [routeBlocking, setRouteBlocking] = useState(true)
   const lastSessionRef = useRef<Session | null>(null)
@@ -75,6 +100,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const pendingResumeSplashRef = useRef(false)
   const lastUserIdRef = useRef<string | null>(null)
   const pushSyncInFlightRef = useRef(false)
+  const signInInFlightRef = useRef(false)
+  const signInLastAttemptAtRef = useRef(0)
+  const signInLastEmailRef = useRef<string | null>(null)
+  const signInCooldownUntilRef = useRef(0)
 
   // Guardamos la ruta actual para poder consultarla dentro del listener de AppState
   const segmentsRef = useRef<string[]>(segments)
@@ -186,7 +215,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       `
         )
         .eq("employee_id", userId)
-        .eq("is_active", true)
 
       if (error) {
         console.error("[AUTH] Error loading employee sites:", error)
@@ -200,7 +228,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return
       }
 
-      const nextSites = data
+      const activeRows = (data ?? []).filter((row: any) => row?.is_active !== false)
+
+      const nextSites = activeRows
         .map((row) => {
           const site = row.sites as any
           if (!site) return null
@@ -248,7 +278,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const withTimeout = async <T>(
+  const withTimeout = async <T,>(
     promise: Promise<T>,
     ms: number,
     label: string,
@@ -320,7 +350,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     ])
   }
 
-  const setSelectedSite = async (siteId: string | null) => {
+  const setSelectedSite = useCallback(async (siteId: string | null) => {
     if (!user) return
     setSelectedSiteId(siteId)
 
@@ -341,7 +371,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await writeCache(cacheKey(user.id, "settings"), {
       selected_site_id: siteId,
     })
-  }
+  }, [user])
+
+  useEffect(() => {
+    if (!user?.id) return
+    if (!selectedSiteId) return
+    if (employeeSites.length === 0) return
+    const exists = employeeSites.some((site) => site.siteId === selectedSiteId)
+    if (exists) return
+    void setSelectedSite(null)
+  }, [user?.id, selectedSiteId, employeeSites, setSelectedSite])
+
+  useEffect(() => {
+    if (!user?.id) {
+      setHasPendingSiteChanges(false)
+      return
+    }
+
+    const channel = supabase
+      .channel(`employee-sites-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "employee_sites",
+          filter: `employee_id=eq.${user.id}`,
+        },
+        () => {
+          setHasPendingSiteChanges(true)
+        }
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [user?.id])
 
   useEffect(() => {
     let isActive = true
@@ -391,7 +457,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoading(true)
 
         try {
-          if (event === "TOKEN_REFRESH_FAILED") {
+          if ((event as string) === "TOKEN_REFRESH_FAILED") {
             console.warn("[AUTH] Token refresh failed, keeping last session")
             const fallback = lastSessionRef.current
             setSession(fallback)
@@ -576,13 +642,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user?.id])
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    const normalizedEmail = email.trim().toLowerCase()
+    const now = Date.now()
+    if (!normalizedEmail || !password) {
+      const invalidError: any = new Error("Credenciales incompletas.")
+      invalidError.status = 400
+      throw invalidError
+    }
 
-    if (error) {
-      throw error
+    if (signInInFlightRef.current) {
+      const lockedError: any = new Error("Inicio de sesión en curso. Espera un momento.")
+      lockedError.status = 429
+      lockedError.retry_after_seconds = 2
+      throw lockedError
+    }
+
+    if (now < signInCooldownUntilRef.current) {
+      const secondsLeft = Math.max(1, Math.ceil((signInCooldownUntilRef.current - now) / 1000))
+      const cooldownError: any = new Error(`Demasiados intentos. Espera ${secondsLeft} segundos.`)
+      cooldownError.status = 429
+      cooldownError.retry_after_seconds = secondsLeft
+      throw cooldownError
+    }
+
+    const isRapidDuplicate =
+      signInLastEmailRef.current === normalizedEmail &&
+      now - signInLastAttemptAtRef.current < SIGN_IN_MIN_INTERVAL_MS
+    if (isRapidDuplicate) {
+      const waitSeconds = Math.max(
+        1,
+        Math.ceil((SIGN_IN_MIN_INTERVAL_MS - (now - signInLastAttemptAtRef.current)) / 1000)
+      )
+      const duplicateError: any = new Error(`Espera ${waitSeconds} segundos antes de reintentar.`)
+      duplicateError.status = 429
+      duplicateError.retry_after_seconds = waitSeconds
+      throw duplicateError
+    }
+
+    signInInFlightRef.current = true
+    signInLastAttemptAtRef.current = now
+    signInLastEmailRef.current = normalizedEmail
+
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
+        password,
+      })
+
+      if (error) {
+        const retrySeconds = parseRetryAfterSeconds(error)
+        if (retrySeconds > 0) {
+          signInCooldownUntilRef.current = Date.now() + retrySeconds * 1000
+        }
+        throw error
+      }
+
+      signInCooldownUntilRef.current = 0
+    } finally {
+      signInInFlightRef.current = false
     }
   }
 
@@ -592,6 +709,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setEmployee(null)
     setEmployeeSites([])
     setSelectedSiteId(null)
+    setHasPendingSiteChanges(false)
     lastUserIdRef.current = null
     if (userId) {
       await clearCache(userId)
@@ -601,8 +719,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshEmployee = async () => {
     if (user) {
       await loadEmployeeBundle(user.id)
+      setHasPendingSiteChanges(false)
     }
   }
+
+  const consumePendingSiteChanges = useCallback(() => {
+    setHasPendingSiteChanges(false)
+  }, [])
 
   const isSplashSegment = segments.includes("splash")
 
@@ -614,10 +737,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         employee,
         employeeSites,
         selectedSiteId,
+        hasPendingSiteChanges,
         isLoading,
         signIn,
         signOut,
         refreshEmployee,
+        consumePendingSiteChanges,
         setSelectedSite,
       }}
     >

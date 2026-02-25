@@ -7,7 +7,7 @@
 
 const REVIEW_EMAILS = (process.env.EXPO_PUBLIC_REVIEW_EMAILS || "")
   .split(",")
-  .map((v) => v.trim().toLowerCase())
+  .map((v: string) => v.trim().toLowerCase())
   .filter(Boolean);
 
 const REVIEW_PASSWORD = (process.env.EXPO_PUBLIC_REVIEW_PASSWORD || "").trim();

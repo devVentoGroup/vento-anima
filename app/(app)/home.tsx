@@ -26,6 +26,7 @@ import { Platform } from "react-native";
 import { useAttendanceContext } from "@/contexts/attendance-context";
 import { supabase } from "@/lib/supabase";
 import { DateRangeModal } from "@/components/home/DateRangeModal";
+import { ReportFilterModal } from "@/components/home/ReportFilterModal";
 import { SitePickerModal } from "@/components/home/SitePickerModal";
 import { UserMenuModal } from "@/components/home/UserMenuModal";
 import { PALETTE, RGBA } from "@/components/home/theme";
@@ -40,6 +41,28 @@ function formatClock(value: string | null) {
 
 const EXPO_PROJECT_ID = "2e1ba93a-039d-49e7-962d-a33ea7eaf9b3";
 
+type ReportEmployeeOption = {
+  id: string;
+  label: string;
+  role: string | null;
+  siteIds: string[];
+};
+
+type ReportSiteOption = {
+  id: string;
+  label: string;
+};
+
+function formatMinutesLabel(totalMinutes: number) {
+  const safe = Math.max(0, Math.round(totalMinutes));
+  const hours = Math.floor(safe / 60);
+  const minutes = safe % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes.toString().padStart(2, "0")}m`;
+  }
+  return `${minutes} min`;
+}
+
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
@@ -49,6 +72,9 @@ export default function HomeScreen() {
     session,
     employee,
     signOut,
+    refreshEmployee,
+    hasPendingSiteChanges,
+    consumePendingSiteChanges,
     employeeSites,
     selectedSiteId,
     isLoading: authIsLoading,
@@ -62,6 +88,8 @@ export default function HomeScreen() {
     loadTodayAttendance,
     checkIn,
     checkOut,
+    startBreak,
+    endBreak,
     selectSiteForCheckIn,
     startRealtimeGeofence,
     stopRealtimeGeofence,
@@ -92,6 +120,16 @@ export default function HomeScreen() {
     base.setHours(0, 0, 0, 0);
     return base;
   });
+  const [reportEmployees, setReportEmployees] = useState<ReportEmployeeOption[]>(
+    [],
+  );
+  const [reportSites, setReportSites] = useState<ReportSiteOption[]>([]);
+  const [reportSiteId, setReportSiteId] = useState<string | null>(null);
+  const [reportEmployeeId, setReportEmployeeId] = useState<string | null>(null);
+  const [isLoadingReportEmployees, setIsLoadingReportEmployees] = useState(false);
+  const [isLoadingReportSites, setIsLoadingReportSites] = useState(false);
+  const [isReportSiteModalOpen, setIsReportSiteModalOpen] = useState(false);
+  const [isReportEmployeeModalOpen, setIsReportEmployeeModalOpen] = useState(false);
 
   const isCheckedIn = attendanceState.status === "checked_in";
   const isGeoChecking = geofenceState.status === "checking";
@@ -107,7 +145,8 @@ export default function HomeScreen() {
   const initialLoadDoneRef = useRef(false);
   const lastStatusRef = useRef<string | null>(null);
   const lastUserIdRef = useRef<string | null>(null);
-  const notificationsPromptRequestedRef = useRef(false);
+  const notificationsPromptAttemptedForUserRef = useRef<string | null>(null);
+  const notificationsPromptInFlightRef = useRef(false);
 
   useEffect(() => {
     if (user?.id !== lastUserIdRef.current) {
@@ -144,7 +183,7 @@ export default function HomeScreen() {
     }
 
     console.log("[HOME] Initial geofence check on load");
-    void refreshGeofence({ force: true });
+    void refreshGeofence({ force: true, source: "user" });
 
     const timer = setTimeout(() => {
     }, 300);
@@ -162,7 +201,7 @@ export default function HomeScreen() {
       return;
 
     const timer = setTimeout(() => {
-      void refreshGeofence({ force: true });
+      void refreshGeofence({ force: true, source: "user" });
     }, 500);
     return () => clearTimeout(timer);
   }, [attendanceState.status, user]);
@@ -194,29 +233,38 @@ export default function HomeScreen() {
   }, [geofenceState.status, geofenceState.updatedAt, stuckTimeout]);
 
   const realtimeStartedRef = useRef(false);
-  const initialGeofenceCheckedRef = useRef(false);
-
+  const siteRefreshInFlightRef = useRef(false);
   useFocusEffect(
     useCallback(() => {
-      if (!user || realtimeStartedRef.current) return;
-      realtimeStartedRef.current = true;
-
-      if (
-        !initialGeofenceCheckedRef.current &&
-        employeeSites &&
-        employeeSites.length > 0
-      ) {
-        initialGeofenceCheckedRef.current = true;
-        console.log("[HOME] Initial geofence check on focus");
-        void refreshGeofence({ force: true });
+      if (user && hasPendingSiteChanges && !siteRefreshInFlightRef.current) {
+        siteRefreshInFlightRef.current = true;
+        void (async () => {
+          try {
+            await refreshEmployee();
+            await refreshGeofence({ force: true, source: "user" });
+          } finally {
+            consumePendingSiteChanges();
+            siteRefreshInFlightRef.current = false;
+          }
+        })();
       }
 
+      if (!user || realtimeStartedRef.current) return;
+      realtimeStartedRef.current = true;
       void startRealtimeGeofence();
       return () => {
         realtimeStartedRef.current = false;
         stopRealtimeGeofence();
       };
-    }, [user, employeeSites]),
+    }, [
+      user,
+      hasPendingSiteChanges,
+      refreshEmployee,
+      consumePendingSiteChanges,
+      refreshGeofence,
+      startRealtimeGeofence,
+      stopRealtimeGeofence,
+    ]),
   );
 
   useEffect(() => {
@@ -260,35 +308,49 @@ export default function HomeScreen() {
 
   useEffect(() => {
     if (!user?.id) {
-      notificationsPromptRequestedRef.current = false;
+      notificationsPromptAttemptedForUserRef.current = null;
+      notificationsPromptInFlightRef.current = false;
       return;
     }
-    if (authIsLoading || isLoading || isGeoChecking) return;
+    const userId = user.id;
+    if (authIsLoading) return;
     if (!initialLoadDoneRef.current) return;
-    if (notificationsPromptRequestedRef.current) return;
+    if (notificationsPromptAttemptedForUserRef.current === userId) return;
+    if (notificationsPromptInFlightRef.current) return;
 
-    notificationsPromptRequestedRef.current = true;
-
-    const timer = setTimeout(async () => {
-      try {
-        const permissions = await Notifications.getPermissionsAsync();
-        if (permissions.status === "granted") {
-          await syncPushToken();
-          return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        if (cancelled || notificationsPromptInFlightRef.current) return;
+        notificationsPromptInFlightRef.current = true;
+        try {
+          const permissions = await Notifications.getPermissionsAsync();
+          if (permissions.status === "granted") {
+            await syncPushToken();
+            return;
+          }
+          if (permissions.status === "undetermined") {
+            const asked = await Notifications.requestPermissionsAsync();
+            if (asked.status === "granted") {
+              await syncPushToken();
+            }
+          }
+        } catch (err) {
+          console.warn("[HOME] Notification permission flow skipped:", err);
+        } finally {
+          notificationsPromptInFlightRef.current = false;
+          if (!cancelled) {
+            notificationsPromptAttemptedForUserRef.current = userId;
+          }
         }
-        if (permissions.status !== "undetermined") return;
-
-        const asked = await Notifications.requestPermissionsAsync();
-        if (asked.status === "granted") {
-          await syncPushToken();
-        }
-      } catch (err) {
-        console.warn("[HOME] Notification permission flow skipped:", err);
-      }
+      })();
     }, 1200);
 
-    return () => clearTimeout(timer);
-  }, [user?.id, authIsLoading, isLoading, isGeoChecking, syncPushToken]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [user?.id, authIsLoading, employee?.id, employeeSites.length, syncPushToken]);
 
   const displayName =
     employee?.alias ||
@@ -312,6 +374,13 @@ export default function HomeScreen() {
   }, []);
 
   const statusUI = useMemo(() => {
+    if (attendanceState.isOnBreak) {
+      return {
+        label: "EN DESCANSO",
+        hint: "Pausa activa",
+        tone: "active" as const,
+      };
+    }
     if (attendanceState.status === "checked_in") {
       return {
         label: "EN TURNO",
@@ -331,7 +400,7 @@ export default function HomeScreen() {
       hint: "Registra tu entrada",
       tone: "idle" as const,
     };
-  }, [attendanceState.status]);
+  }, [attendanceState.status, attendanceState.isOnBreak]);
   const geofenceUI = useMemo(() => {
     if (geofenceState.status === "ready")
       return { label: "VERIFICADA", highlight: true };
@@ -372,39 +441,35 @@ export default function HomeScreen() {
   const [currentTime, setCurrentTime] = useState(Date.now());
 
   useEffect(() => {
-    if (isCheckedIn && attendanceState.openStartAt) {
+    if (isCheckedIn) {
       const interval = setInterval(() => {
         setCurrentTime(Date.now());
       }, 1000);
       return () => clearInterval(interval);
     }
-  }, [isCheckedIn, attendanceState.openStartAt]);
+  }, [isCheckedIn]);
 
-  const calculateTodayMinutes = useMemo(() => {
-    const baseMinutes = attendanceState.todayMinutes ?? 0;
-    if (!isCheckedIn || !attendanceState.openStartAt) {
-      return Math.max(0, Math.round(baseMinutes));
-    }
+  const totalMinutes = useMemo(() => {
+    const baseMinutes = Math.max(0, Math.round(attendanceState.todayMinutes ?? 0));
+    if (!isCheckedIn) return baseMinutes;
+    if (attendanceState.isOnBreak) return baseMinutes;
+    if (!attendanceState.snapshotAt) return baseMinutes;
 
-    const openStart = new Date(attendanceState.openStartAt).getTime();
-    const now = currentTime;
-    const minutesFromOpen = (now - openStart) / 60000;
+    const snapshotMs = new Date(attendanceState.snapshotAt).getTime();
+    if (!Number.isFinite(snapshotMs)) return baseMinutes;
 
-    return Math.max(0, Math.round(baseMinutes + Math.max(0, minutesFromOpen)));
+    const deltaMinutes = Math.max(0, (currentTime - snapshotMs) / 60000);
+    return Math.max(0, Math.round(baseMinutes + deltaMinutes));
   }, [
     attendanceState.todayMinutes,
-    attendanceState.openStartAt,
+    attendanceState.snapshotAt,
+    attendanceState.isOnBreak,
     currentTime,
     isCheckedIn,
   ]);
 
-  const totalMinutes = Math.max(0, calculateTodayMinutes);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = Math.floor(totalMinutes % 60);
-  const hoursLabel =
-    hours > 0
-      ? `${hours}h ${minutes.toString().padStart(2, "0")}m`
-      : `${minutes} min`;
+  const hoursLabel = formatMinutesLabel(totalMinutes);
+  const breakMinutesLabel = formatMinutesLabel(attendanceState.todayBreakMinutes ?? 0);
 
   const lastCheckIn = formatClock(attendanceState.lastCheckIn);
   const lastCheckOut = formatClock(attendanceState.lastCheckOut);
@@ -415,7 +480,7 @@ export default function HomeScreen() {
     setActionError(null);
     try {
       await loadTodayAttendance();
-      await refreshGeofence({ force: true });
+      await refreshGeofence({ force: true, source: "user" });
     } finally {
       setIsRefreshing(false);
     }
@@ -452,7 +517,7 @@ export default function HomeScreen() {
         },
       );
 
-      geo = await refreshGeofence({ force: true });
+      geo = await refreshGeofence({ force: true, source: "check_action" });
 
       const maxWait = 8000;
       const startTime = Date.now();
@@ -472,7 +537,7 @@ export default function HomeScreen() {
           `[HOME] Waiting for geofence (${geo.status})... (attempt ${attempts + 1}/${maxAttempts})`,
         );
         await new Promise((resolve) => setTimeout(resolve, 1000));
-        geo = await refreshGeofence({ force: true });
+        geo = await refreshGeofence({ force: true, source: "check_action" });
         attempts++;
 
         if (geo.canProceed && geo.status === "ready") break;
@@ -497,13 +562,24 @@ export default function HomeScreen() {
     }
   };
 
+  const handleToggleBreak = async () => {
+    if (!isCheckedIn || isLoading) return;
+    setActionError(null);
+
+    const result = attendanceState.isOnBreak
+      ? await endBreak()
+      : await startBreak();
+
+    if (!result.success) {
+      const msg = result.error || "No se pudo actualizar el descanso";
+      setActionError(msg);
+      Alert.alert("Descanso", msg);
+    }
+  };
+
   const handleSignOut = async () => {
     setIsUserMenuOpen(false);
     await signOut();
-  };
-
-  const handleSoon = (title: string) => {
-    Alert.alert(title, "Esta sección estará disponible pronto.");
   };
 
   const goToHistory = () => {
@@ -533,17 +609,162 @@ export default function HomeScreen() {
   const GLOBAL_REPORT_ROLES = new Set(["propietario", "gerente_general"]);
   const MANAGER_REPORT_SITE_TYPES = new Set(["satellite", "production_center"]);
   const selectedSiteType = selectedSite?.siteType ?? null;
-
+  const isGlobalReportRole = role != null && GLOBAL_REPORT_ROLES.has(role);
+  const canManagerTeamReports =
+    role === "gerente" &&
+    selectedSiteType != null &&
+    MANAGER_REPORT_SITE_TYPES.has(selectedSiteType);
+  const canPersonalReports =
+    role != null && !isGlobalReportRole && role !== "gerente";
   const canViewReports =
-    (role != null && GLOBAL_REPORT_ROLES.has(role)) ||
-    (role === "gerente" &&
-      selectedSiteType != null &&
-      MANAGER_REPORT_SITE_TYPES.has(selectedSiteType));
+    isGlobalReportRole || canManagerTeamReports || canPersonalReports;
 
-  const reportScopeLabel =
-    role != null && GLOBAL_REPORT_ROLES.has(role)
-      ? "Todas las sedes"
-      : selectedSite?.siteName || "Tu sede";
+  const selectedReportSite = useMemo(
+    () =>
+      reportSiteId
+        ? reportSites.find((item) => item.id === reportSiteId) ?? null
+        : null,
+    [reportSiteId, reportSites],
+  );
+
+  const filteredReportEmployees = useMemo(() => {
+    if (!reportSiteId) return reportEmployees;
+    return reportEmployees.filter((item) => item.siteIds.includes(reportSiteId));
+  }, [reportEmployees, reportSiteId]);
+
+  const selectedReportEmployee = useMemo(
+    () =>
+      reportEmployeeId
+        ? filteredReportEmployees.find((item) => item.id === reportEmployeeId) ??
+          null
+        : null,
+    [reportEmployeeId, filteredReportEmployees],
+  );
+
+  const effectiveReportSiteId = isGlobalReportRole ? reportSiteId : null;
+  const effectiveReportEmployeeId = isGlobalReportRole
+    ? reportEmployeeId
+    : canPersonalReports
+      ? user?.id ?? null
+      : null;
+
+  const reportTitle = canPersonalReports
+    ? "Mi asistencia"
+    : "Asistencia del equipo";
+
+  const reportScopeLabel = isGlobalReportRole
+    ? selectedReportSite && selectedReportEmployee
+      ? `Sede: ${selectedReportSite.label} | Trabajador: ${selectedReportEmployee.label}`
+      : selectedReportSite
+        ? `Sede: ${selectedReportSite.label}`
+        : selectedReportEmployee
+          ? `Trabajador: ${selectedReportEmployee.label}`
+          : "Todas las sedes"
+    : canManagerTeamReports
+      ? selectedSite?.siteName || "Tu sede"
+      : "Registro personal";
+
+  useEffect(() => {
+    if (!isGlobalReportRole) {
+      setReportEmployees([]);
+      setReportSites([]);
+      setReportSiteId(null);
+      setReportEmployeeId(null);
+      setIsLoadingReportEmployees(false);
+      setIsLoadingReportSites(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingReportEmployees(true);
+    setIsLoadingReportSites(true);
+    void (async () => {
+      try {
+        const [
+          { data: sitesData, error: sitesError },
+          { data: employeesData, error: employeesError },
+          { data: assignmentsData, error: assignmentsError },
+        ] = await Promise.all([
+          supabase
+            .from("sites")
+            .select("id, name, is_active")
+            .eq("is_active", true)
+            .order("name", { ascending: true }),
+          supabase
+            .from("employees")
+            .select("id, full_name, alias, role, is_active, site_id")
+            .eq("is_active", true)
+            .order("full_name", { ascending: true }),
+          supabase
+            .from("employee_sites")
+            .select("employee_id, site_id, is_active")
+            .eq("is_active", true),
+        ]);
+
+        if (sitesError) throw sitesError;
+        if (employeesError) throw employeesError;
+        if (assignmentsError) throw assignmentsError;
+        if (cancelled) return;
+
+        const siteOptions = ((sitesData as any[]) ?? []).map((row) => ({
+          id: row.id as string,
+          label: (row.name as string | null) ?? "Sede sin nombre",
+        }));
+        setReportSites(siteOptions);
+        setReportSiteId((prev) =>
+          prev && !siteOptions.some((item) => item.id === prev) ? null : prev,
+        );
+
+        const siteIdsByEmployee = new Map<string, Set<string>>();
+        for (const row of (assignmentsData as any[]) ?? []) {
+          const employeeId = row.employee_id as string | null;
+          const siteId = row.site_id as string | null;
+          if (!employeeId || !siteId) continue;
+          const set = siteIdsByEmployee.get(employeeId) ?? new Set<string>();
+          set.add(siteId);
+          siteIdsByEmployee.set(employeeId, set);
+        }
+
+        const options = ((employeesData as any[]) ?? []).map((row) => {
+          const employeeId = row.id as string;
+          const fallbackSiteId = (row.site_id as string | null) ?? null;
+          const siteSet = siteIdsByEmployee.get(employeeId) ?? new Set<string>();
+          if (fallbackSiteId) siteSet.add(fallbackSiteId);
+          return {
+            id: employeeId,
+            label:
+              (row.alias as string | null) ??
+              (row.full_name as string | null) ??
+              employeeId,
+            role: (row.role as string | null) ?? null,
+            siteIds: [...siteSet.values()],
+          } as ReportEmployeeOption;
+        });
+        setReportEmployees(options);
+        setReportEmployeeId((prev) =>
+          prev && !options.some((item) => item.id === prev) ? null : prev,
+        );
+      } catch (err) {
+        console.warn("[HOME] Unable to load report filters:", err);
+      } finally {
+        if (!cancelled) {
+          setIsLoadingReportEmployees(false);
+          setIsLoadingReportSites(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isGlobalReportRole]);
+
+  useEffect(() => {
+    if (!isGlobalReportRole) return;
+    if (!reportEmployeeId) return;
+    if (filteredReportEmployees.some((item) => item.id === reportEmployeeId)) return;
+    setReportEmployeeId(null);
+  }, [isGlobalReportRole, reportEmployeeId, filteredReportEmployees]);
 
   const formatShortDate = (value: Date) =>
     value.toLocaleDateString("es-CO", {
@@ -636,6 +857,12 @@ export default function HomeScreen() {
     const url = new URL("/functions/v1/attendance-report", baseUrl);
     url.searchParams.set("start", start.toISOString());
     url.searchParams.set("end", end.toISOString());
+    if (effectiveReportSiteId) {
+      url.searchParams.set("site_id", effectiveReportSiteId);
+    }
+    if (effectiveReportEmployeeId) {
+      url.searchParams.set("employee_id", effectiveReportEmployeeId);
+    }
 
     const response = await fetch(url.toString(), {
       headers: {
@@ -666,7 +893,7 @@ export default function HomeScreen() {
       const uri = await createReportFile();
       if (!(await Sharing.isAvailableAsync())) {
         Alert.alert(
-          "Exportacion",
+          "Exportación",
           "No hay opciones de compartir disponibles en este dispositivo.",
         );
         return;
@@ -746,7 +973,17 @@ export default function HomeScreen() {
     await selectSiteForCheckIn(siteId);
   };
 
-  const candidateSites = geofenceState.candidateSites ?? [];
+  const candidateSites =
+    geofenceState.candidateSites && geofenceState.candidateSites.length > 0
+      ? geofenceState.candidateSites
+      : employeeSites.map((site) => ({
+          id: site.siteId,
+          name: site.siteName,
+          distanceMeters: 0,
+          effectiveRadiusMeters: site.radiusMeters ?? 0,
+          requiresGeolocation: site.latitude != null && site.longitude != null,
+        }));
+  const canChooseSite = employeeSites.length > 1;
   const topPadding = Math.max(20, insets.top + 12);
   const modalWidth = Math.min(windowWidth - 40, 420);
   const UI = {
@@ -908,11 +1145,7 @@ export default function HomeScreen() {
         visible={isUserMenuOpen}
         topPadding={topPadding}
         onClose={() => setIsUserMenuOpen(false)}
-        onRefresh={() => {
-          setIsUserMenuOpen(false);
-          void handleRefresh();
-        }}
-        onProfile={() => {
+        onSettings={() => {
           setIsUserMenuOpen(false);
           router.push("/account-settings");
         }}
@@ -944,6 +1177,36 @@ export default function HomeScreen() {
         toDateKey={toDateKey}
         formatShortDate={formatShortDate}
         formatMonthLabel={formatMonthLabel}
+      />
+
+      <ReportFilterModal
+        visible={isReportSiteModalOpen}
+        title="Seleccionar sede"
+        subtitle="Filtra el reporte por una sede específica o usa todas."
+        options={reportSites}
+        selectedId={reportSiteId}
+        includeAll
+        allLabel="Todas las sedes"
+        modalWidth={modalWidth}
+        onSelect={(id) => setReportSiteId(id)}
+        onClose={() => setIsReportSiteModalOpen(false)}
+      />
+
+      <ReportFilterModal
+        visible={isReportEmployeeModalOpen}
+        title="Seleccionar trabajador"
+        subtitle={
+          reportSiteId
+            ? "Mostrando solo trabajadores asignados a la sede filtrada."
+            : "Puedes seleccionar un trabajador específico o todos."
+        }
+        options={filteredReportEmployees}
+        selectedId={reportEmployeeId}
+        includeAll
+        allLabel="Todos los trabajadores"
+        modalWidth={modalWidth}
+        onSelect={(id) => setReportEmployeeId(id)}
+        onClose={() => setIsReportEmployeeModalOpen(false)}
       />
 
       
@@ -1043,6 +1306,7 @@ export default function HomeScreen() {
               </Text>
             )}
           </TouchableOpacity>
+
         </View>
       </View>
 
@@ -1157,12 +1421,16 @@ export default function HomeScreen() {
                 marginBottom: 10,
               }}
             >
-              {isCheckedIn ? "en curso" : "hoy"}
+              netos hoy
             </Text>
           </View>
 
           <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 6 }}>
             {statusUI.hint}
+          </Text>
+          <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
+            Descanso acumulado: {breakMinutesLabel}
+            {attendanceState.isOnBreak ? " (en curso)" : ""}
           </Text>
           {attendanceState.lastCheckOutSource === "system" &&
           attendanceState.lastCheckOut ? (
@@ -1292,7 +1560,7 @@ export default function HomeScreen() {
               </View>
 
               <TouchableOpacity
-                onPress={() => refreshGeofence({ force: true })}
+                onPress={() => refreshGeofence({ force: true, source: "user" })}
                 disabled={isLoading || isGeoChecking}
                 style={{
                   ...UI.btnGhostPink,
@@ -1314,6 +1582,32 @@ export default function HomeScreen() {
                 )}
               </TouchableOpacity>
             </View>
+
+            {canChooseSite ? (
+              <TouchableOpacity
+                onPress={() => setIsSitePickerOpen(true)}
+                style={{
+                  marginTop: 10,
+                  alignSelf: "flex-start",
+                  paddingVertical: 8,
+                  paddingHorizontal: 12,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: PALETTE.border,
+                  backgroundColor: PALETTE.porcelain2,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 12,
+                    fontWeight: "700",
+                    color: PALETTE.text,
+                  }}
+                >
+                  Seleccionar sede
+                </Text>
+              </TouchableOpacity>
+            ) : null}
 
             <View style={{ flexDirection: "row", gap: 12, marginTop: 14 }}>
               <View style={{ flex: 1, ...UI.surface2, padding: 12 }}>
@@ -1459,6 +1753,40 @@ export default function HomeScreen() {
               </View>
             )}
           </TouchableOpacity>
+
+          {isCheckedIn ? (
+            <TouchableOpacity
+              onPress={handleToggleBreak}
+              disabled={isLoading}
+              style={{
+                marginTop: 10,
+                borderRadius: 14,
+                paddingVertical: 12,
+                paddingHorizontal: 14,
+                borderWidth: 1,
+                borderColor: attendanceState.isOnBreak
+                  ? COLORS.rosegold
+                  : PALETTE.border,
+                backgroundColor: attendanceState.isOnBreak
+                  ? "rgba(242, 198, 192, 0.28)"
+                  : PALETTE.porcelain2,
+                opacity: isLoading ? 0.6 : 1,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 13,
+                  fontWeight: "800",
+                  color: attendanceState.isOnBreak ? COLORS.rosegold : COLORS.text,
+                  textAlign: "center",
+                }}
+              >
+                {attendanceState.isOnBreak
+                  ? "Finalizar descanso"
+                  : "Tomar descanso"}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {canViewReports ? (
@@ -1476,13 +1804,82 @@ export default function HomeScreen() {
                   marginTop: 6,
                 }}
               >
-                Asistencia del equipo
+                {reportTitle}
               </Text>
               <Text
                 style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}
               >
                 Alcance: {reportScopeLabel}
               </Text>
+              {isGlobalReportRole ? (
+                <View style={{ marginTop: 10 }}>
+                  <Text style={{ fontSize: 12, color: COLORS.neutral }}>
+                    Filtros
+                  </Text>
+
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                    <TouchableOpacity
+                      onPress={() => setIsReportSiteModalOpen(true)}
+                      style={{
+                        flex: 1,
+                        ...UI.pill,
+                        borderColor: reportSiteId ? COLORS.accent : PALETTE.border,
+                        backgroundColor: reportSiteId
+                          ? "rgba(226, 0, 106, 0.12)"
+                          : PALETTE.porcelain2,
+                      }}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        style={{
+                          fontSize: 12,
+                          fontWeight: "800",
+                          color: reportSiteId ? COLORS.accent : COLORS.text,
+                          textAlign: "center",
+                        }}
+                      >
+                        {isLoadingReportSites
+                          ? "Cargando sedes..."
+                          : selectedReportSite?.label ?? "Todas las sedes"}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => setIsReportEmployeeModalOpen(true)}
+                      disabled={isLoadingReportEmployees}
+                      style={{
+                        flex: 1,
+                        ...UI.pill,
+                        borderColor: reportEmployeeId ? COLORS.accent : PALETTE.border,
+                        backgroundColor: reportEmployeeId
+                          ? "rgba(226, 0, 106, 0.12)"
+                          : PALETTE.porcelain2,
+                        opacity: isLoadingReportEmployees ? 0.7 : 1,
+                      }}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        style={{
+                          fontSize: 12,
+                          fontWeight: "800",
+                          color: reportEmployeeId ? COLORS.accent : COLORS.text,
+                          textAlign: "center",
+                        }}
+                      >
+                        {isLoadingReportEmployees
+                          ? "Cargando trabajadores..."
+                          : selectedReportEmployee?.label ?? "Todos los trabajadores"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text style={{ fontSize: 11, color: COLORS.neutral, marginTop: 8 }}>
+                    {reportSiteId
+                      ? `${filteredReportEmployees.length} trabajadores en la sede seleccionada`
+                      : `${reportEmployees.length} trabajadores disponibles`}
+                  </Text>
+                </View>
+              ) : null}
               <View style={{ marginTop: 10 }}>
                 <Text style={{ fontSize: 12, color: COLORS.neutral }}>
                   Periodo: {reportRangeLabel}
@@ -1580,7 +1977,7 @@ export default function HomeScreen() {
               marginBottom: 10,
             }}
           >
-            Accesos rapidos
+            Accesos rápidos
           </Text>
 
           <View style={{ flexDirection: "row", gap: 12 }}>
@@ -1785,5 +2182,6 @@ export default function HomeScreen() {
     </View>
   );
 }
+
 
 

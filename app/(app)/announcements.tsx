@@ -351,7 +351,7 @@ export default function AnnouncementsScreen() {
           <View style={styles.emptyCard}>
             <Text style={styles.emptyTitle}>Sin novedades por ahora</Text>
             <Text style={styles.emptySubtitle}>
-              Cuando publiquemos nuevos comunicados, apareceran aqui.
+              Cuando publiquemos nuevos comunicados, aparecerán aquí.
             </Text>
           </View>
         ) : null}

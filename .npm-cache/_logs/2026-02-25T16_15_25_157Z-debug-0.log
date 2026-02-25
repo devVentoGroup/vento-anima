@@ -1,0 +1,26 @@
+0 verbose cli C:\Program Files\nodejs\node.exe C:\Users\vento\AppData\Roaming\npm\node_modules\npm\bin\npm-cli.js
+1 info using npm@11.10.1
+2 info using node@v24.11.1
+3 silly config load:file:C:\Users\vento\AppData\Roaming\npm\node_modules\npm\npmrc
+4 silly config load:file:C:\Users\vento\OneDrive\MACBOOK\Escritorio\Vento OS\vento-anima\.npmrc
+5 silly config load:file:C:\Users\vento\.npmrc
+6 silly config load:file:C:\Users\vento\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm explain @unimodules/react-native-adapter
+8 verbose argv "explain" "@unimodules/react-native-adapter" "--json"
+9 verbose logfile logs-max:10 dir:C:\Users\vento\OneDrive\MACBOOK\Escritorio\Vento OS\vento-anima\.npm-cache\_logs\2026-02-25T16_15_25_157Z-
+10 verbose logfile C:\Users\vento\OneDrive\MACBOOK\Escritorio\Vento OS\vento-anima\.npm-cache\_logs\2026-02-25T16_15_25_157Z-debug-0.log
+11 silly logfile start cleaning logs, removing 2 files
+12 silly packumentCache heap:4496293888 maxSize:1124073472 maxEntrySize:562036736
+13 silly logfile done cleaning log files
+14 verbose stack Error: No dependencies found matching @unimodules/react-native-adapter
+14 verbose stack     at Explain.exec (C:\Users\vento\AppData\Roaming\npm\node_modules\npm\lib\commands\explain.js:56:13)
+14 verbose stack     at async Npm.exec (C:\Users\vento\AppData\Roaming\npm\node_modules\npm\lib\npm.js:209:9)
+14 verbose stack     at async module.exports (C:\Users\vento\AppData\Roaming\npm\node_modules\npm\lib\cli\entry.js:67:5)
+15 error No dependencies found matching @unimodules/react-native-adapter
+16 verbose cwd C:\Users\vento\OneDrive\MACBOOK\Escritorio\Vento OS\vento-anima
+17 verbose os Windows_NT 10.0.26100
+18 verbose node v24.11.1
+19 verbose npm  v11.10.1
+20 verbose exit 1
+21 verbose code 1
+22 error A complete log of this run can be found in: C:\Users\vento\OneDrive\MACBOOK\Escritorio\Vento OS\vento-anima\.npm-cache\_logs\2026-02-25T16_15_25_157Z-debug-0.log

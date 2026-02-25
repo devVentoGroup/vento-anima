@@ -9,7 +9,9 @@ type TeamMemberCardProps = {
   formatName: (employee: EmployeeRow) => string;
   roleLabel: (role: string) => string;
   canEdit: boolean;
+  canDelete: boolean;
   onEdit: () => void;
+  onDelete: () => void;
 };
 
 export default function TeamMemberCard({
@@ -17,7 +19,9 @@ export default function TeamMemberCard({
   formatName,
   roleLabel,
   canEdit,
+  canDelete,
   onEdit,
+  onDelete,
 }: TeamMemberCardProps) {
   const statusActive = employee.is_active !== false;
   const statusColor = statusActive ? COLORS.rosegold : COLORS.neutral;
@@ -58,14 +62,27 @@ export default function TeamMemberCard({
         </View>
       </View>
 
-      {canEdit ? (
-        <TouchableOpacity
-          onPress={onEdit}
-          style={[TEAM_UI.chip, styles.editButton]}
-        >
-          <Ionicons name="create-outline" size={16} color={COLORS.accent} />
-          <Text style={styles.editText}>Editar</Text>
-        </TouchableOpacity>
+      {canEdit || canDelete ? (
+        <View style={styles.actionsRow}>
+          {canEdit ? (
+            <TouchableOpacity
+              onPress={onEdit}
+              style={[TEAM_UI.chip, styles.editButton]}
+            >
+              <Ionicons name="create-outline" size={16} color={COLORS.accent} />
+              <Text style={styles.editText}>Editar</Text>
+            </TouchableOpacity>
+          ) : null}
+          {canDelete ? (
+            <TouchableOpacity
+              onPress={onDelete}
+              style={[TEAM_UI.chip, styles.deleteButton]}
+            >
+              <Ionicons name="trash-outline" size={16} color={COLORS.accent} />
+              <Text style={styles.deleteText}>Eliminar</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );
@@ -111,8 +128,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "800",
   },
-  editButton: {
+  actionsRow: {
     marginTop: 12,
+    flexDirection: "row",
+    gap: 8,
+  },
+  editButton: {
     borderColor: COLORS.accent,
     backgroundColor: "rgba(226, 0, 106, 0.10)",
     flexDirection: "row",
@@ -121,6 +142,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   editText: {
+    fontWeight: "800",
+    color: COLORS.accent,
+  },
+  deleteButton: {
+    borderColor: "rgba(226, 0, 106, 0.35)",
+    backgroundColor: "rgba(226, 0, 106, 0.08)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    justifyContent: "center",
+  },
+  deleteText: {
     fontWeight: "800",
     color: COLORS.accent,
   },

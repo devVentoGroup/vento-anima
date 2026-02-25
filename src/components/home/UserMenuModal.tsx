@@ -6,8 +6,7 @@ type UserMenuModalProps = {
   visible: boolean
   topPadding: number
   onClose: () => void
-  onRefresh: () => void
-  onProfile: () => void
+  onSettings: () => void
   onSignOut: () => void
 }
 
@@ -15,8 +14,7 @@ export function UserMenuModal({
   visible,
   topPadding,
   onClose,
-  onRefresh,
-  onProfile,
+  onSettings,
   onSignOut,
 }: UserMenuModalProps) {
   return (
@@ -41,19 +39,10 @@ export function UserMenuModal({
             minWidth: 220,
           }}
         >
-          <TouchableOpacity onPress={onRefresh} style={{ paddingVertical: 12, paddingHorizontal: 16 }}>
-            <Text style={{ fontSize: 14, fontWeight: "600", color: COLORS.text }}>Actualizar</Text>
+          <TouchableOpacity onPress={onSettings} style={{ paddingVertical: 12, paddingHorizontal: 16 }}>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: COLORS.text }}>Configuración</Text>
             <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 2 }}>
-              Recargar estado de hoy
-            </Text>
-          </TouchableOpacity>
-
-          <View style={{ height: 1, backgroundColor: COLORS.border }} />
-
-          <TouchableOpacity onPress={onProfile} style={{ paddingVertical: 12, paddingHorizontal: 16 }}>
-            <Text style={{ fontSize: 14, fontWeight: "600", color: COLORS.text }}>Configuracion y privacidad</Text>
-            <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 2 }}>
-              Eliminar cuenta y gestionar datos
+              Privacidad, permisos y cuenta
             </Text>
           </TouchableOpacity>
 

@@ -1,14 +1,18 @@
 import { Tabs } from "expo-router"
 import { Ionicons } from "@expo/vector-icons"
 import { Platform } from "react-native"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { COLORS } from "@/constants/colors"
 import { useAuth } from "@/contexts/auth-context"
 
 export default function AppLayout() {
   const { employee } = useAuth()
+  const insets = useSafeAreaInsets()
   const role = employee?.role ?? null
   const canSeeTeam =
     role === "propietario" || role === "gerente_general" || role === "gerente"
+  const androidBottomInset = Platform.OS === "android" ? Math.max(insets.bottom, 16) : 0
+  const iosBottomInset = Platform.OS === "ios" ? Math.max(insets.bottom, 12) : 0
 
   return (
     <Tabs
@@ -30,8 +34,8 @@ export default function AppLayout() {
           borderTopWidth: 1,
 
           paddingTop: 6,
-          paddingBottom: Platform.OS === "ios" ? 12 : 10,
-          height: Platform.OS === "ios" ? 78 : 72,
+          paddingBottom: Platform.OS === "ios" ? iosBottomInset : androidBottomInset,
+          height: Platform.OS === "ios" ? 64 + iosBottomInset : 56 + androidBottomInset,
 
           // iOS shadow
           shadowColor: COLORS.shadow ?? COLORS.text,

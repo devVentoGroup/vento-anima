@@ -49,7 +49,7 @@ export function SitePickerModal({
             Selecciona tu sede
           </Text>
           <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 6 }}>
-            Est√°s cerca de varias sedes. Elige la correcta para continuar.
+            Est·s cerca de varias sedes. Elige la correcta para continuar.
           </Text>
 
           <View style={{ marginTop: 12, gap: 10 }}>
@@ -75,7 +75,7 @@ export function SitePickerModal({
                     {site.name}
                   </Text>
                   <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
-                    {site.distanceMeters}m - radio {site.effectiveRadiusMeters}m
+                    {site.effectiveRadiusMeters > 0 ? `${site.distanceMeters}m - radio ${site.effectiveRadiusMeters}m` : `${site.distanceMeters}m - radio sin configurar`}
                   </Text>
                 </TouchableOpacity>
               ))
@@ -100,3 +100,4 @@ export function SitePickerModal({
     </Modal>
   )
 }
+

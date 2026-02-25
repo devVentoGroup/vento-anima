@@ -21,6 +21,7 @@ import TeamEmptyState from "@/components/team/TeamEmptyState";
 import TeamMemberCard from "@/components/team/TeamMemberCard";
 import TeamEditModal from "@/components/team/TeamEditModal";
 import TeamInviteModal from "@/components/team/TeamInviteModal";
+import TeamDeleteModal from "@/components/team/TeamDeleteModal";
 import { TEAM_UI } from "@/components/team/ui";
 import { getUserFacingAuthError } from "@/utils/error-messages";
 import type {
@@ -63,6 +64,9 @@ export default function TeamScreen() {
   const canManageTeam = canViewTeam;
   const canViewAllSites = isOwner || isGlobalManager;
   const canChangeSites = canViewAllSites;
+  const ownerDeleteUid = process.env.EXPO_PUBLIC_ANIMA_OWNER_DELETE_UID ?? null;
+  const canUseDeleteFlow =
+    !!ownerDeleteUid && !!user?.id && user.id === ownerDeleteUid;
 
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [sites, setSites] = useState<SiteRow[]>([]);
@@ -101,6 +105,11 @@ export default function TeamScreen() {
     role: "",
     siteId: null,
   });
+  const [deletingEmployee, setDeletingEmployee] = useState<EmployeeRow | null>(
+    null,
+  );
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [isDeletingEmployee, setIsDeletingEmployee] = useState(false);
 
   const defaultFilter = useMemo(() => {
     if (canViewAllSites) return null;
@@ -600,6 +609,76 @@ export default function TeamScreen() {
     }
   };
 
+  const closeDelete = () => {
+    setDeletingEmployee(null);
+    setDeleteConfirmText("");
+    setIsDeletingEmployee(false);
+  };
+
+  const startDelete = (item: EmployeeRow) => {
+    if (!canUseDeleteFlow) {
+      Alert.alert("Equipo", "No tienes permisos para eliminar trabajadores.");
+      return;
+    }
+    if (item.id === user?.id) {
+      Alert.alert("Equipo", "No puedes eliminar tu propio usuario.");
+      return;
+    }
+    if (item.role === OWNER_ROLE) {
+      Alert.alert("Equipo", "No se puede eliminar otro propietario.");
+      return;
+    }
+
+    Alert.alert(
+      "Eliminar trabajador",
+      `Se eliminará permanentemente ${formatName(item)} junto con sus registros. ¿Deseas continuar?`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Continuar",
+          style: "destructive",
+          onPress: () => {
+            setDeletingEmployee(item);
+            setDeleteConfirmText("");
+          },
+        },
+      ],
+    );
+  };
+
+  const confirmDelete = async () => {
+    if (!deletingEmployee) return;
+    if (deleteConfirmText.trim().toUpperCase() !== "ELIMINAR") return;
+
+    setIsDeletingEmployee(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("employee-delete", {
+        body: {
+          target_employee_id: deletingEmployee.id,
+        },
+      });
+
+      if (error) {
+        throw new Error(error.message || "No se pudo eliminar el trabajador");
+      }
+      if (data?.error) {
+        throw new Error(String(data.error));
+      }
+
+      await loadEmployees();
+      closeDelete();
+      Alert.alert("Equipo", "Trabajador eliminado correctamente.");
+    } catch (err) {
+      console.error("Delete employee error:", err);
+      Alert.alert(
+        "Equipo",
+        getUserFacingAuthError(err, "No se pudo eliminar el trabajador."),
+      );
+    } finally {
+      setIsDeletingEmployee(false);
+    }
+  };
+
   const availableRoleOptions = useMemo(() => {
     if (isOwner) return roles;
     if (isGlobalManager) {
@@ -642,6 +721,7 @@ export default function TeamScreen() {
   const primarySiteLabel = form.primarySiteId
     ? sites.find((site) => site.id === form.primarySiteId)?.name
     : null;
+  const normalizedPrimarySiteLabel = primarySiteLabel ?? null;
 
   const roleName = form.role ? roleLabel(form.role) : null;
   const isEditingSelf = editingEmployee?.id === user?.id;
@@ -808,6 +888,8 @@ export default function TeamScreen() {
             if (!canAssignRole(item.role) && !isSelf) {
               canEditItem = false;
             }
+            const canDeleteItem =
+              canUseDeleteFlow && !isSelf && item.role !== OWNER_ROLE;
 
             return (
               <TeamMemberCard
@@ -816,7 +898,9 @@ export default function TeamScreen() {
                 formatName={formatName}
                 roleLabel={roleLabel}
                 canEdit={canEditItem}
+                canDelete={canDeleteItem}
                 onEdit={() => startEdit(item)}
+                onDelete={() => startDelete(item)}
               />
             );
           })}
@@ -827,7 +911,7 @@ export default function TeamScreen() {
         insets={insets}
         form={form}
         roleName={roleName}
-        primarySiteLabel={primarySiteLabel}
+        primarySiteLabel={normalizedPrimarySiteLabel}
         canPickRole={canPickRole}
         canPickSites={canPickSites}
         isSaving={isSaving}
@@ -871,6 +955,17 @@ export default function TeamScreen() {
         onSetPickerQuery={setPickerQuery}
         onUpdateForm={updateInviteForm}
       />
+
+      <TeamDeleteModal
+        visible={!!deletingEmployee}
+        insets={insets}
+        employeeName={deletingEmployee ? formatName(deletingEmployee) : ""}
+        confirmText={deleteConfirmText}
+        isDeleting={isDeletingEmployee}
+        onChangeConfirmText={setDeleteConfirmText}
+        onClose={closeDelete}
+        onConfirm={confirmDelete}
+      />
     </View>
   );
 }
@@ -899,4 +994,3 @@ const styles = StyleSheet.create({
     color: COLORS.text,
   },
 });
-

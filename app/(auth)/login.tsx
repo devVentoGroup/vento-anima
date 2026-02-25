@@ -36,8 +36,10 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [retryAfterSeconds, setRetryAfterSeconds] = useState(0);
 
   const passwordRef = useRef<RNTextInput>(null);
+  const loginInFlightRef = useRef(false);
 
   const { width: W, height: H } = Dimensions.get("window");
 
@@ -99,13 +101,55 @@ export default function LoginScreen() {
     transform: [{ translateY: scanTranslateY.value }],
   }));
 
+  const getRateLimitCooldownSeconds = (error: unknown): number => {
+    const anyErr = error as any;
+    const explicitRetry = Number(anyErr?.retry_after_seconds);
+    if (Number.isFinite(explicitRetry) && explicitRetry > 0) {
+      return Math.ceil(explicitRetry);
+    }
+    const status = anyErr?.status;
+    const message = String(anyErr?.message ?? "").toLowerCase();
+    const code = String(anyErr?.code ?? "").toLowerCase();
+
+    const isRateLimit =
+      status === 429 ||
+      message.includes("rate limit") ||
+      message.includes("too many") ||
+      code.includes("over_request_rate_limit");
+
+    if (!isRateLimit) return 0;
+
+    const secondsMatch = message.match(/(\d+)\s*(seconds|second|secs|sec|s)\b/);
+    if (secondsMatch) {
+      return Math.max(15, Number(secondsMatch[1]));
+    }
+
+    const minutesMatch = message.match(/(\d+)\s*(minutes|minute|mins|min|m)\b/);
+    if (minutesMatch) {
+      return Math.max(30, Number(minutesMatch[1]) * 60);
+    }
+
+    return 60;
+  };
+
+  useEffect(() => {
+    if (retryAfterSeconds <= 0) return;
+    const timer = setInterval(() => {
+      setRetryAfterSeconds((prev) => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [retryAfterSeconds]);
+
   const handleLogin = async () => {
     const trimmedEmail = email.trim();
-    if (!trimmedEmail || !password || loading) return;
+    if (!trimmedEmail || !password || loading || loginInFlightRef.current || retryAfterSeconds > 0) {
+      return;
+    }
     if (!/^\S+@\S+\.\S+$/.test(trimmedEmail)) {
       setErrorMsg("Escribe un correo válido.");
       return;
     }
+    loginInFlightRef.current = true;
     setLoading(true);
     setErrorMsg(null);
 
@@ -117,6 +161,10 @@ export default function LoginScreen() {
         : password;
       await signIn(trimmedEmail, effectivePassword);
     } catch (e: any) {
+      const cooldown = getRateLimitCooldownSeconds(e);
+      if (cooldown > 0) {
+        setRetryAfterSeconds((prev) => Math.max(prev, cooldown));
+      }
       setErrorMsg(
         getUserFacingAuthError(
           e,
@@ -124,6 +172,7 @@ export default function LoginScreen() {
         ),
       );
     } finally {
+      loginInFlightRef.current = false;
       setLoading(false);
     }
   };

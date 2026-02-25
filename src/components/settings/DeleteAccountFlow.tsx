@@ -55,11 +55,11 @@ export function DeleteAccountFlow({
   const handleSubmit = async () => {
     const result = await onRequestFullDeletion();
     if (!result.success) {
-      Alert.alert("Error", result.error || "No se pudo programar la eliminacion.");
+      Alert.alert("Error", result.error || "No se pudo programar la eliminación.");
       return;
     }
 
-    Alert.alert("Solicitud creada", "Tu cuenta quedo programada para eliminacion en 30 dias.");
+    Alert.alert("Solicitud creada", "Tu cuenta quedó programada para eliminación en 30 días.");
     setPhrase("");
     setIrreversibleChecked(false);
   };
@@ -71,19 +71,19 @@ export function DeleteAccountFlow({
       return;
     }
 
-    Alert.alert("Solicitud cancelada", "La eliminacion de cuenta fue cancelada.");
+    Alert.alert("Solicitud cancelada", "La eliminación de cuenta fue cancelada.");
   };
 
   return (
     <View style={styles.card}>
       <Text style={styles.title}>Eliminar cuenta completa</Text>
       <Text style={styles.description}>
-        Se eliminara el acceso y se anonimizaran tus datos personales. El historico operativo se conserva sin datos identificables.
+        Se eliminará el acceso y se anonimizarán tus datos personales. El histórico operativo se conserva sin datos identificables.
       </Text>
 
       {hasPending ? (
         <View style={styles.pendingBox}>
-          <Text style={styles.pendingTitle}>Eliminacion programada</Text>
+          <Text style={styles.pendingTitle}>Eliminación programada</Text>
           <Text style={styles.pendingText}>Estado: {pendingRequest?.status === "processing" ? "Procesando" : "Pendiente"}</Text>
           {executeDateText ? <Text style={styles.pendingText}>Fecha estimada: {executeDateText}</Text> : null}
           <TouchableOpacity style={styles.cancelButton} disabled={submitting} onPress={handleCancel}>
@@ -93,7 +93,7 @@ export function DeleteAccountFlow({
       ) : (
         <>
           <View style={styles.sectionBox}>
-            <Text style={styles.sectionTitle}>Confirmacion final</Text>
+            <Text style={styles.sectionTitle}>Confirmación final</Text>
             <Text style={styles.helperLabel}>Escribe ELIMINAR</Text>
             <TextInput
               value={phrase}
@@ -106,12 +106,12 @@ export function DeleteAccountFlow({
 
             <View style={styles.switchRow}>
               <Switch value={irreversibleChecked} onValueChange={setIrreversibleChecked} />
-              <Text style={styles.switchText}>Entiendo que esta acción es irreversible tras 30 dias.</Text>
+              <Text style={styles.switchText}>Entiendo que esta acción es irreversible tras 30 días.</Text>
             </View>
           </View>
 
           <TouchableOpacity style={[styles.dangerButton, !canSubmit && styles.disabled]} disabled={!canSubmit} onPress={handleSubmit}>
-            {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.dangerButtonText}>Programar eliminacion</Text>}
+            {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.dangerButtonText}>Programar eliminación</Text>}
           </TouchableOpacity>
         </>
       )}

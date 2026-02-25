@@ -1,4 +1,5 @@
 import {
+  ActivityIndicator,
   Keyboard,
   KeyboardEvent,
   Modal,
@@ -20,7 +21,10 @@ import { SUPPORT_UI } from "@/components/support/ui";
 
 type SupportTicketModalProps = {
   visible: boolean;
+  title: string;
   message: string;
+  isSubmitting?: boolean;
+  onChangeTitle: (value: string) => void;
   onChangeMessage: (value: string) => void;
   onClose: () => void;
   onSubmit: () => void;
@@ -28,7 +32,10 @@ type SupportTicketModalProps = {
 
 export default function SupportTicketModal({
   visible,
+  title,
   message,
+  isSubmitting = false,
+  onChangeTitle,
   onChangeMessage,
   onClose,
   onSubmit,
@@ -40,9 +47,12 @@ export default function SupportTicketModal({
   const modalBottomGap = 20;
   const modalMaxHeight = useMemo(() => {
     if (isKeyboardVisible) {
-      return Math.max(220, windowHeight - keyboardHeight - modalTopGap - modalBottomGap);
+      return Math.max(
+        240,
+        windowHeight - keyboardHeight - modalTopGap - modalBottomGap,
+      );
     }
-    return Math.max(300, windowHeight - modalBottomGap * 2);
+    return Math.max(320, windowHeight - modalBottomGap * 2);
   }, [isKeyboardVisible, keyboardHeight, windowHeight]);
 
   useEffect(() => {
@@ -71,7 +81,9 @@ export default function SupportTicketModal({
       <Pressable
         style={[
           styles.modalOverlay,
-          isKeyboardVisible ? styles.modalOverlayKeyboard : styles.modalOverlayCentered,
+          isKeyboardVisible
+            ? styles.modalOverlayKeyboard
+            : styles.modalOverlayCentered,
           { paddingTop: isKeyboardVisible ? modalTopGap : 20, paddingBottom: 20 },
         ]}
         onPress={onClose}
@@ -87,25 +99,36 @@ export default function SupportTicketModal({
             >
               <Text style={styles.modalTitle}>Nuevo ticket</Text>
               <Text style={styles.modalSubtitle}>
-                Describe el problema con el mayor detalle posible.
+                Crea un ticket y sigue la conversacion dentro del chat interno.
               </Text>
+
+              <TextInput
+                value={title}
+                onChangeText={onChangeTitle}
+                placeholder="Asunto (ej: Error en check-in)"
+                placeholderTextColor={COLORS.neutral}
+                style={styles.titleInput}
+              />
+
               <TextInput
                 value={message}
                 onChangeText={onChangeMessage}
-                placeholder="Ej: No puedo registrar entrada en Vento Group."
+                placeholder="Describe el problema con detalle."
                 placeholderTextColor={COLORS.neutral}
                 multiline
-                style={styles.input}
+                style={styles.messageInput}
               />
 
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   onPress={onClose}
+                  disabled={isSubmitting}
                   style={[
                     SUPPORT_UI.chip,
                     {
                       borderColor: COLORS.border,
                       backgroundColor: COLORS.porcelainAlt,
+                      opacity: isSubmitting ? 0.6 : 1,
                     },
                   ]}
                 >
@@ -113,6 +136,7 @@ export default function SupportTicketModal({
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={onSubmit}
+                  disabled={isSubmitting}
                   style={[
                     SUPPORT_UI.chip,
                     {
@@ -121,11 +145,18 @@ export default function SupportTicketModal({
                       flexDirection: "row",
                       alignItems: "center",
                       gap: 8,
+                      opacity: isSubmitting ? 0.7 : 1,
                     },
                   ]}
                 >
-                  <Ionicons name="send-outline" size={16} color={COLORS.accent} />
-                  <Text style={styles.sendText}>Enviar</Text>
+                  {isSubmitting ? (
+                    <ActivityIndicator size="small" color={COLORS.accent} />
+                  ) : (
+                    <Ionicons name="send-outline" size={16} color={COLORS.accent} />
+                  )}
+                  <Text style={styles.sendText}>
+                    {isSubmitting ? "Enviando..." : "Enviar"}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -174,14 +205,23 @@ const styles = StyleSheet.create({
     color: COLORS.neutral,
     marginTop: 6,
   },
-  input: {
+  titleInput: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.porcelainAlt,
+    padding: 12,
+    marginTop: 12,
+    color: COLORS.text,
+  },
+  messageInput: {
     minHeight: 110,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: COLORS.porcelainAlt,
     padding: 12,
-    marginTop: 12,
+    marginTop: 10,
     marginBottom: 12,
     color: COLORS.text,
     textAlignVertical: "top",
@@ -200,4 +240,3 @@ const styles = StyleSheet.create({
     color: COLORS.accent,
   },
 });
-
