@@ -40,7 +40,7 @@ export default function TeamMemberCard({
             {formatName(employee)}
           </Text>
           <Text style={styles.meta} numberOfLines={1}>
-            {roleLabel(employee.role)} · {siteName}
+            {roleLabel(employee.role)} - {siteName}
           </Text>
         </View>
 

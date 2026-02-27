@@ -89,18 +89,7 @@ const MANAGER_ROLE = "gerente"
 const MANAGER_ALLOWED_SITE_TYPES = new Set(["satellite", "production_center"])
 const SHIFT_LEAVE_EVENT_TYPE = "left_site_open_shift"
 
-const DATE_TIME_FORMATTER = new Intl.DateTimeFormat("es-CO", {
-  dateStyle: "medium",
-  timeStyle: "short",
-})
-const DATE_ONLY_FORMATTER = new Intl.DateTimeFormat("es-CO", {
-  dateStyle: "medium",
-})
-const TIME_ONLY_FORMATTER = new Intl.DateTimeFormat("es-CO", {
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-})
+const DEFAULT_REPORT_TIME_ZONE = "America/Bogota"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -108,20 +97,43 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 }
 
-function formatDate(value: Date): string {
-  return DATE_ONLY_FORMATTER.format(value)
+function normalizeTimeZone(rawValue: string | null): string {
+  const candidate = String(rawValue ?? "").trim()
+  if (!candidate) return DEFAULT_REPORT_TIME_ZONE
+  try {
+    new Intl.DateTimeFormat("es-CO", { timeZone: candidate }).format(new Date())
+    return candidate
+  } catch {
+    return DEFAULT_REPORT_TIME_ZONE
+  }
 }
 
 function formatDateForFilename(value: Date): string {
   return value.toISOString().slice(0, 10)
 }
 
-function formatDateTime(value: string): string {
-  return DATE_TIME_FORMATTER.format(new Date(value))
+function formatDate(value: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("es-CO", {
+    dateStyle: "medium",
+    timeZone,
+  }).format(value)
 }
 
-function formatTime(value: string): string {
-  return TIME_ONLY_FORMATTER.format(new Date(value))
+function formatDateTime(value: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("es-CO", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone,
+  }).format(new Date(value))
+}
+
+function formatTime(value: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("es-CO", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone,
+  }).format(new Date(value))
 }
 
 function toBase64(buffer: ArrayBuffer): string {
@@ -204,6 +216,7 @@ function buildShiftRecords(
   breakRows: BreakRow[],
   eventRows: ShiftEventRow[],
   rangeEndIso: string,
+  timeZone: string,
 ): ShiftRecord[] {
   const nowMs = Date.now()
   const rangeEndMs = Math.min(new Date(rangeEndIso).getTime(), nowMs)
@@ -283,7 +296,7 @@ function buildShiftRecords(
           : overlapRanges
               .map(
                 (item) =>
-                  `${formatTime(new Date(item.startMs).toISOString())}-${formatTime(new Date(item.endMs).toISOString())}`,
+                  `${formatTime(new Date(item.startMs).toISOString(), timeZone)}-${formatTime(new Date(item.endMs).toISOString(), timeZone)}`,
               )
               .join(" | ")
 
@@ -306,10 +319,10 @@ function buildShiftRecords(
       if (departureAt) {
         const distanceLabel =
           departureDistanceMeters != null ? ` (${Math.round(departureDistanceMeters)}m)` : ""
-        observations.push(`Salida de sede detectada ${formatDateTime(departureAt)}${distanceLabel}`)
+        observations.push(`Salida de sede detectada ${formatDateTime(departureAt, timeZone)}${distanceLabel}`)
       }
       if (isAutoClose) {
-        observations.push(`Cierre automático ${formatTime(shiftEndAtIso)}`)
+        observations.push(`Cierre automático ${formatTime(shiftEndAtIso, timeZone)}`)
       }
       if (status === "Abierto") {
         observations.push("Turno abierto")
@@ -502,6 +515,7 @@ serve(async (req: Request) => {
     const endParam = url.searchParams.get("end")
     const requestedEmployeeId = url.searchParams.get("employee_id")?.trim() || null
     const requestedSiteId = url.searchParams.get("site_id")?.trim() || null
+    const reportTimeZone = normalizeTimeZone(url.searchParams.get("tz"))
 
     const end = endParam ? new Date(endParam) : new Date()
     const start = startParam ? new Date(startParam) : new Date(end.getTime() - 30 * 86400000)
@@ -701,7 +715,7 @@ serve(async (req: Request) => {
     const breakRows = (breakData ?? []) as BreakRow[]
     const eventRows = (eventData ?? []) as ShiftEventRow[]
 
-    const shifts = buildShiftRecords(attendanceRows, breakRows, eventRows, endIso)
+    const shifts = buildShiftRecords(attendanceRows, breakRows, eventRows, endIso, reportTimeZone)
     const summaryRows = buildEmployeeSummary(shifts)
     const shiftsByEmployee = new Map<string, ShiftRecord[]>()
     for (const row of shifts) {
@@ -726,7 +740,7 @@ serve(async (req: Request) => {
     summarySheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "D9E8F6" } }
 
     summarySheet.mergeCells("A2:N2")
-    summarySheet.getCell("A2").value = `Periodo: ${formatDate(start)} a ${formatDate(end)} | Alcance: ${scopeLabel} | Generado: ${formatDate(new Date())}`
+    summarySheet.getCell("A2").value = `Periodo: ${formatDate(start, reportTimeZone)} a ${formatDate(end, reportTimeZone)} | Alcance: ${scopeLabel} | Generado: ${formatDate(new Date(), reportTimeZone)}`
     summarySheet.getCell("A2").font = { size: 9, italic: true }
     summarySheet.getCell("A2").alignment = { vertical: "middle", horizontal: "left" }
 
@@ -867,7 +881,7 @@ serve(async (req: Request) => {
     generalSheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "D9E8F6" } }
 
     generalSheet.mergeCells("A2:M2")
-    generalSheet.getCell("A2").value = `Periodo: ${formatDate(start)} a ${formatDate(end)} | Alcance: ${scopeLabel}`
+    generalSheet.getCell("A2").value = `Periodo: ${formatDate(start, reportTimeZone)} a ${formatDate(end, reportTimeZone)} | Alcance: ${scopeLabel}`
     generalSheet.getCell("A2").font = { size: 9, italic: true }
     generalSheet.getCell("A2").alignment = { vertical: "middle", horizontal: "left" }
 
@@ -917,17 +931,17 @@ serve(async (req: Request) => {
 
           generalSheet.getRow(generalRow).values = [
             idx + 1,
-            formatDate(new Date(shift.shiftStartAt)),
+            formatDate(new Date(shift.shiftStartAt), reportTimeZone),
             shift.siteName || "-",
-            formatTime(shift.shiftStartAt),
+            formatTime(shift.shiftStartAt, reportTimeZone),
             shift.breakRangesLabel,
             shift.breakMinutes,
-            shift.status === "Abierto" ? "-" : formatTime(shift.shiftEndAt),
+            shift.status === "Abierto" ? "-" : formatTime(shift.shiftEndAt, reportTimeZone),
             shift.grossMinutes,
             shift.netMinutes,
             minutesToClock(shift.netMinutes),
-            shift.departureAt ? formatDateTime(shift.departureAt) : "-",
-            shift.autoCloseAt ? formatDateTime(shift.autoCloseAt) : "-",
+            shift.departureAt ? formatDateTime(shift.departureAt, reportTimeZone) : "-",
+            shift.autoCloseAt ? formatDateTime(shift.autoCloseAt, reportTimeZone) : "-",
             shift.observations,
           ]
           applyDataStyle(generalSheet.getRow(generalRow), idx % 2 === 1)
@@ -994,7 +1008,7 @@ serve(async (req: Request) => {
       sheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "D9E8F6" } }
 
       sheet.mergeCells("A2:M2")
-      sheet.getCell("A2").value = `Periodo: ${formatDate(start)} a ${formatDate(end)} | Rol: ${person.role || "-"} | Sede(s): ${person.sites.join(" | ") || "-"}`
+      sheet.getCell("A2").value = `Periodo: ${formatDate(start, reportTimeZone)} a ${formatDate(end, reportTimeZone)} | Rol: ${person.role || "-"} | Sede(s): ${person.sites.join(" | ") || "-"}`
       sheet.getCell("A2").font = { size: 9, italic: true }
       sheet.getCell("A2").alignment = { vertical: "middle", horizontal: "left" }
 
@@ -1029,17 +1043,17 @@ serve(async (req: Request) => {
 
         sheet.getRow(rowIndex).values = [
           idx + 1,
-          formatDate(new Date(shift.shiftStartAt)),
+          formatDate(new Date(shift.shiftStartAt), reportTimeZone),
           shift.siteName || "-",
-          formatTime(shift.shiftStartAt),
+          formatTime(shift.shiftStartAt, reportTimeZone),
           shift.breakRangesLabel,
           shift.breakMinutes,
-          shift.status === "Abierto" ? "-" : formatTime(shift.shiftEndAt),
+          shift.status === "Abierto" ? "-" : formatTime(shift.shiftEndAt, reportTimeZone),
           shift.grossMinutes,
           shift.netMinutes,
           minutesToClock(shift.netMinutes),
-          shift.departureAt ? formatDateTime(shift.departureAt) : "-",
-          shift.autoCloseAt ? formatDateTime(shift.autoCloseAt) : "-",
+          shift.departureAt ? formatDateTime(shift.departureAt, reportTimeZone) : "-",
+          shift.autoCloseAt ? formatDateTime(shift.autoCloseAt, reportTimeZone) : "-",
           shift.observations,
         ]
         applyDataStyle(sheet.getRow(rowIndex), idx % 2 === 1)

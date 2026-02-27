@@ -130,15 +130,17 @@ export default function HomeScreen() {
   const [isLoadingReportSites, setIsLoadingReportSites] = useState(false);
   const [isReportSiteModalOpen, setIsReportSiteModalOpen] = useState(false);
   const [isReportEmployeeModalOpen, setIsReportEmployeeModalOpen] = useState(false);
+  const [isCheckActionLocked, setIsCheckActionLocked] = useState(false);
+  const checkActionLockRef = useRef(false);
 
   const isCheckedIn = attendanceState.status === "checked_in";
   const isGeoChecking = geofenceState.status === "checking";
   const canRegister =
     !isLoading &&
-    !isOffline &&
     geofenceState.canProceed &&
     !isGeoChecking &&
-    !geofenceState.requiresSelection;
+    !geofenceState.requiresSelection &&
+    !isCheckActionLocked;
   const ctaTextColor = canRegister ? PALETTE.porcelain : PALETTE.text;
   const ctaSubTextOpacity = canRegister ? 0.9 : 0.7;
 
@@ -489,76 +491,79 @@ export default function HomeScreen() {
   const handleCheck = async () => {
     if (isLoading) return;
     if (isGeoChecking) return;
+    if (checkActionLockRef.current) return;
 
+    checkActionLockRef.current = true;
+    setIsCheckActionLocked(true);
     setActionError(null);
 
-    if (isOffline) {
-      setActionError("Sin conexión. Revisa tu internet e intenta de nuevo.");
-      return;
-    }
-
-    if (geofenceState.requiresSelection) {
-      setActionError("Selecciona una sede para continuar.");
-      setIsSitePickerOpen(true);
-      return;
-    }
-
-    let geo = geofenceState;
-    const needsVerification =
-      geo.status === "idle" || geo.status === "checking" || !geo.canProceed;
-
-    if (needsVerification) {
-      console.log(
-        "[HOME] Geofence not ready, forcing immediate verification...",
-        {
-          status: geo.status,
-          canProceed: geo.canProceed,
-          siteId: geo.siteId,
-        },
-      );
-
-      geo = await refreshGeofence({ force: true, source: "check_action" });
-
-      const maxWait = 8000;
-      const startTime = Date.now();
-      let attempts = 0;
-      const maxAttempts = 6;
-
-      while (
-        (geo.status === "checking" ||
-          geo.status === "idle" ||
-          !geo.canProceed) &&
-        Date.now() - startTime < maxWait &&
-        attempts < maxAttempts &&
-        geo.status !== "blocked" &&
-        geo.status !== "error"
-      ) {
-        console.log(
-          `[HOME] Waiting for geofence (${geo.status})... (attempt ${attempts + 1}/${maxAttempts})`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        geo = await refreshGeofence({ force: true, source: "check_action" });
-        attempts++;
-
-        if (geo.canProceed && geo.status === "ready") break;
+    try {
+      if (geofenceState.requiresSelection) {
+        setActionError("Selecciona una sede para continuar.");
+        setIsSitePickerOpen(true);
+        return;
       }
-    }
 
-    if (!geo.canProceed) {
-      const msg =
-        geo.status === "idle"
-          ? "La verificación de ubicación no se ha completado. Intenta de nuevo."
-          : geo.message || "Ubicación no verificada";
-      setActionError(msg);
-      Alert.alert("No se puede registrar", msg);
-      return;
-    }
+      let geo = geofenceState;
+      const needsVerification =
+        geo.status === "idle" || geo.status === "checking" || !geo.canProceed;
 
-    const result = isCheckedIn ? await checkOut() : await checkIn();
-    if (!result.success) {
-      const msg = result.error || "No se pudo completar la acción";
-      setActionError(msg);
-      Alert.alert("No se puede registrar", msg);
+      if (needsVerification) {
+        console.log(
+          "[HOME] Geofence not ready, forcing immediate verification...",
+          {
+            status: geo.status,
+            canProceed: geo.canProceed,
+            siteId: geo.siteId,
+          },
+        );
+
+        geo = await refreshGeofence({ force: true, source: "check_action" });
+
+        const maxWait = 8000;
+        const startTime = Date.now();
+        let attempts = 0;
+        const maxAttempts = 6;
+
+        while (
+          (geo.status === "checking" ||
+            geo.status === "idle" ||
+            !geo.canProceed) &&
+          Date.now() - startTime < maxWait &&
+          attempts < maxAttempts &&
+          geo.status !== "blocked" &&
+          geo.status !== "error"
+        ) {
+          console.log(
+            `[HOME] Waiting for geofence (${geo.status})... (attempt ${attempts + 1}/${maxAttempts})`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          geo = await refreshGeofence({ force: true, source: "check_action" });
+          attempts++;
+
+          if (geo.canProceed && geo.status === "ready") break;
+        }
+      }
+
+      if (!geo.canProceed) {
+        const msg =
+          geo.status === "idle"
+            ? "La verificacion de ubicacion no se ha completado. Intenta de nuevo."
+            : geo.message || "Ubicacion no verificada";
+        setActionError(msg);
+        Alert.alert("No se puede registrar", msg);
+        return;
+      }
+
+      const result = isCheckedIn ? await checkOut() : await checkIn();
+      if (!result.success) {
+        const msg = result.error || "No se pudo completar la accion";
+        setActionError(msg);
+        Alert.alert("No se puede registrar", msg);
+      }
+    } finally {
+      checkActionLockRef.current = false;
+      setIsCheckActionLocked(false);
     }
   };
 
@@ -857,6 +862,10 @@ export default function HomeScreen() {
     const url = new URL("/functions/v1/attendance-report", baseUrl);
     url.searchParams.set("start", start.toISOString());
     url.searchParams.set("end", end.toISOString());
+    const deviceTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (deviceTimeZone) {
+      url.searchParams.set("tz", deviceTimeZone);
+    }
     if (effectiveReportSiteId) {
       url.searchParams.set("site_id", effectiveReportSiteId);
     }
@@ -1561,10 +1570,10 @@ export default function HomeScreen() {
 
               <TouchableOpacity
                 onPress={() => refreshGeofence({ force: true, source: "user" })}
-                disabled={isLoading || isGeoChecking}
+                disabled={isLoading || isGeoChecking || isCheckActionLocked}
                 style={{
                   ...UI.btnGhostPink,
-                  opacity: isLoading || isGeoChecking ? 0.6 : 1,
+                  opacity: isLoading || isGeoChecking || isCheckActionLocked ? 0.6 : 1,
                 }}
               >
                 {isGeoChecking ? (
@@ -1674,7 +1683,7 @@ export default function HomeScreen() {
               }}
             >
               {isOffline
-                ? "Sin conexión: no podrás registrar asistencia."
+                ? "Sin conexión o red inestable: el registro puede fallar."
                 : geofenceState.status === "ready"
                   ? "Ubicación verificada. Ya tienes permiso para registrar."
                   : geofenceState.message ||
@@ -1707,7 +1716,7 @@ export default function HomeScreen() {
             ]}
             activeOpacity={0.85}
           >
-            {isLoading || isGeoChecking ? (
+            {isLoading || isGeoChecking || isCheckActionLocked ? (
               <View
                 style={{ flexDirection: "row", alignItems: "center", gap: 12 }}
               >
@@ -2182,6 +2191,4 @@ export default function HomeScreen() {
     </View>
   );
 }
-
-
 

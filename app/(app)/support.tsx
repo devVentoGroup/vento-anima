@@ -502,7 +502,7 @@ export default function SupportScreen() {
                           marginTop: 4,
                         }}
                       >
-                        {ticket.siteName ?? "Sin sede"} ·{" "}
+                        {ticket.siteName ?? "Sin sede"} -{" "}
                         {formatDateTime(ticket.updated_at)}
                       </Text>
                     </View>

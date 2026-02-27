@@ -142,6 +142,9 @@ const SHIFT_DEPARTURE_TRACKING = {
   minCheckIntervalMs: 45000,
 }
 
+const GEOFENCE_READY_CACHE_MS = 45000
+const SITE_RESOLVE_CACHE_MS = 5 * 60 * 1000
+
 function getAttendanceSource(): string {
   return "mobile"
 }
@@ -222,6 +225,9 @@ export function useAttendance() {
   const realtimeWatchRef = useRef<Location.LocationSubscription | null>(null)
   const lastRealtimeTickRef = useRef(0)
   const geofenceCacheRef = useRef<GeofenceCheckState | null>(null)
+  const siteResolveCacheRef = useRef<
+    Map<string, { site: SiteCoordinates; hasCoordinates: boolean; cachedAt: number }>
+  >(new Map())
   const departureEventInFlightRef = useRef(false)
   const departureLastCheckAtRef = useRef(0)
   const departureLoggedShiftKeyRef = useRef<string | null>(null)
@@ -252,7 +258,12 @@ export function useAttendance() {
 
   const resolveSite = useCallback(
     async (siteId: string): Promise<{ site: SiteCoordinates | null; hasCoordinates: boolean }> => {
-      // SIEMPRE obtener coordenadas frescas de la BD para evitar usar datos en caché desactualizados
+      const now = Date.now()
+      const cached = siteResolveCacheRef.current.get(siteId)
+      if (cached && now - cached.cachedAt <= SITE_RESOLVE_CACHE_MS) {
+        return { site: cached.site, hasCoordinates: cached.hasCoordinates }
+      }
+
       const { data, error } = await supabase
         .from("sites")
         .select("id, name, latitude, longitude, checkin_radius_meters, type")
@@ -261,13 +272,17 @@ export function useAttendance() {
 
       if (error || !data) {
         console.error('[resolveSite] Error obteniendo sede de BD:', error)
-        // Fallback a la caché solo si falla la BD
+        if (cached) {
+          console.warn('[resolveSite] Usando sede en cache por falla de red')
+          return { site: cached.site, hasCoordinates: cached.hasCoordinates }
+        }
+
         const fromList = employeeSites.find((item) => item.siteId === siteId)
         if (fromList) {
-          console.warn('[resolveSite] Usando datos en caché como fallback')
+          console.warn('[resolveSite] Usando employeeSites como fallback')
           const hasCoordinates = fromList.latitude != null && fromList.longitude != null
-          const requiresGeolocation = hasCoordinates // Si tiene coordenadas, requiere geo
-          return {
+          const requiresGeolocation = hasCoordinates
+          const result = {
             site: {
               id: fromList.siteId,
               name: fromList.siteName,
@@ -278,14 +293,19 @@ export function useAttendance() {
             },
             hasCoordinates,
           }
+          siteResolveCacheRef.current.set(siteId, {
+            site: result.site,
+            hasCoordinates,
+            cachedAt: now,
+          })
+          return result
         }
         return { site: null, hasCoordinates: false }
       }
 
       const hasCoordinates = data.latitude != null && data.longitude != null
-      const requiresGeolocation = hasCoordinates // Si tiene coordenadas, requiere geo
-
-      return {
+      const requiresGeolocation = hasCoordinates
+      const result = {
         site: {
           id: data.id,
           name: data.name,
@@ -296,6 +316,13 @@ export function useAttendance() {
         },
         hasCoordinates,
       }
+
+      siteResolveCacheRef.current.set(siteId, {
+        site: result.site,
+        hasCoordinates,
+        cachedAt: now,
+      })
+      return result
     },
     [employeeSites]
   )
@@ -665,7 +692,7 @@ export function useAttendance() {
         cached.mode === mode &&
         cached.siteId === siteId &&
         cached.updatedAt != null &&
-        now - cached.updatedAt <= 20000
+        now - cached.updatedAt <= GEOFENCE_READY_CACHE_MS
 
       if (canReuse) return cached
 
@@ -876,7 +903,9 @@ export function useAttendance() {
           distanceMeters,
           accuracyMeters: acc,
           effectiveRadiusMeters: effectiveRadius,
-          message: `Precision GPS insuficiente (${Math.round(acc)}m). Acercate a una ventana y vuelve a intentar.`,
+          message: `Precision GPS insuficiente (${Math.round(
+            acc
+          )}m). Debe ser <= ${policy.maxAccuracyMeters}m para registrar.`,
           updatedAt: now,
           location,
           deviceInfo: buildDeviceInfoPayload(location, {
@@ -905,9 +934,9 @@ export function useAttendance() {
           distanceMeters: Math.round(distance),
           accuracyMeters: acc,
           effectiveRadiusMeters: effectiveRadius,
-          message: `Estás a ${Math.round(distance)}m (precisión ${Math.round(
+          message: `Estas a ${Math.round(distance)}m y la precision es ${Math.round(
             acc
-          )}m). Debes estar dentro de ${effectiveRadius}m con señal suficiente.`,
+          )}m. Validacion real: ${Math.round(distance + acc)}m <= ${effectiveRadius}m.`,
           updatedAt: now,
           location,
           deviceInfo: buildDeviceInfoPayload(location, {
@@ -995,7 +1024,10 @@ export function useAttendance() {
     try {
       // Asegurar que el geofence esté listo antes de proceder
       // En producción, el geofence puede tardar más en verificarse
-      let geo = await refreshGeofence({ force: true, mode: "check_in", source: "check_action" })
+      let geo = await refreshGeofence({ force: false, mode: "check_in", source: "check_action" })
+      if (!geo.canProceed) {
+        geo = await refreshGeofence({ force: true, mode: "check_in", source: "check_action" })
+      }
       
       // Si el geofence está "checking" o no está listo, esperar hasta que esté listo (máximo 8 segundos)
       const maxWait = 8000
@@ -1090,12 +1122,20 @@ export function useAttendance() {
     try {
       const siteIdToClose = lastLog.site_id
 
-      const geo = await refreshGeofence({
-        force: true,
+      let geo = await refreshGeofence({
+        force: false,
         mode: "check_out",
         siteId: siteIdToClose,
         source: "check_action",
       })
+      if (!geo.canProceed) {
+        geo = await refreshGeofence({
+          force: true,
+          mode: "check_out",
+          siteId: siteIdToClose,
+          source: "check_action",
+        })
+      }
       if (!geo.canProceed) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
         return { success: false, error: geo.message || "Ubicación no verificada" }
