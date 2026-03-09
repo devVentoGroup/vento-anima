@@ -63,6 +63,29 @@ function formatMinutesLabel(totalMinutes: number) {
   return `${minutes} min`;
 }
 
+function formatRetryClock(value: number | null) {
+  if (!value) return null;
+  return new Date(value).toLocaleTimeString("es-CO", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatRemainingShort(ms: number) {
+  const safe = Math.max(0, ms);
+  const totalMinutes = Math.ceil(safe / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0) return `${hours}h ${minutes.toString().padStart(2, "0")}m`;
+  return `${minutes} min`;
+}
+
+function formatLatency(value: number | null) {
+  if (value == null) return "--";
+  if (value < 1000) return `${value} ms`;
+  return `${(value / 1000).toFixed(1)} s`;
+}
+
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
@@ -85,6 +108,21 @@ export default function HomeScreen() {
     refreshGeofence,
     isLoading,
     isOffline,
+    pendingAttendanceCount,
+    pendingAttendanceSyncingCount,
+    pendingAttendanceFailedCount,
+    pendingAttendanceConflictCount,
+    pendingAttendanceNextRetryAt,
+    pendingAttendanceLastError,
+    pendingAttendanceOldestCreatedAt,
+    pendingBreakCount,
+    pendingBreakSyncingCount,
+    pendingBreakFailedCount,
+    attendanceUxState,
+    attendanceUxMessage,
+    attendanceDiagnostics,
+    syncPendingAttendanceQueue,
+    syncPendingBreakQueue,
     loadTodayAttendance,
     checkIn,
     checkOut,
@@ -131,9 +169,35 @@ export default function HomeScreen() {
   const [isReportSiteModalOpen, setIsReportSiteModalOpen] = useState(false);
   const [isReportEmployeeModalOpen, setIsReportEmployeeModalOpen] = useState(false);
   const [isCheckActionLocked, setIsCheckActionLocked] = useState(false);
+  const [recentQueuedFeedback, setRecentQueuedFeedback] = useState(false);
+  const [opsSectionY, setOpsSectionY] = useState(0);
   const checkActionLockRef = useRef(false);
+  const scrollRef = useRef<ScrollView | null>(null);
+  const refreshGeofenceRef = useRef(refreshGeofence);
+  const startRealtimeGeofenceRef = useRef(startRealtimeGeofence);
+  const stopRealtimeGeofenceRef = useRef(stopRealtimeGeofence);
+  const refreshEmployeeRef = useRef(refreshEmployee);
+  const consumePendingSiteChangesRef = useRef(consumePendingSiteChanges);
+
+  useEffect(() => {
+    refreshGeofenceRef.current = refreshGeofence;
+  }, [refreshGeofence]);
+  useEffect(() => {
+    startRealtimeGeofenceRef.current = startRealtimeGeofence;
+  }, [startRealtimeGeofence]);
+  useEffect(() => {
+    stopRealtimeGeofenceRef.current = stopRealtimeGeofence;
+  }, [stopRealtimeGeofence]);
+  useEffect(() => {
+    refreshEmployeeRef.current = refreshEmployee;
+  }, [refreshEmployee]);
+  useEffect(() => {
+    consumePendingSiteChangesRef.current = consumePendingSiteChanges;
+  }, [consumePendingSiteChanges]);
 
   const isCheckedIn = attendanceState.status === "checked_in";
+  const showAttendanceDiagnostics =
+    process.env.EXPO_PUBLIC_SHOW_ATTENDANCE_DIAGNOSTICS === "1";
   const isGeoChecking = geofenceState.status === "checking";
   const canRegister =
     !isLoading &&
@@ -143,6 +207,99 @@ export default function HomeScreen() {
     !isCheckActionLocked;
   const ctaTextColor = canRegister ? PALETTE.porcelain : PALETTE.text;
   const ctaSubTextOpacity = canRegister ? 0.9 : 0.7;
+  const hasPendingAny = pendingAttendanceCount + pendingBreakCount > 0;
+  const isSyncingAny =
+    pendingAttendanceSyncingCount > 0 || pendingBreakSyncingCount > 0;
+
+  const ctaPrimaryLabel = useMemo(() => {
+    if (isLoading || isGeoChecking || isCheckActionLocked) {
+      return isGeoChecking ? "Validando ubicación..." : "Registrando...";
+    }
+    if (attendanceUxState === "ready") {
+      return isCheckedIn ? "Registrar salida" : "Registrar entrada";
+    }
+    if (recentQueuedFeedback) return "Registro guardado";
+    if (hasPendingAny || isSyncingAny) return "Pendiente de sincronización";
+    if (attendanceUxState === "blocked") return "Validar ubicación en sede";
+    if (attendanceUxState === "failed") return "Reintentaremos automáticamente";
+    if (attendanceUxState === "syncing") return "Sincronizando registros pendientes...";
+    if (attendanceUxState === "queued") return "Registro guardado. Se sincroniza automáticamente.";
+    if (attendanceUxState === "checking") return "Validando ubicación...";
+    if (attendanceUxMessage) return attendanceUxMessage;
+    return isCheckedIn ? "Registrar salida" : "Registrar entrada";
+  }, [
+    isLoading,
+    isGeoChecking,
+    isCheckActionLocked,
+    isSyncingAny,
+    recentQueuedFeedback,
+    hasPendingAny,
+    attendanceUxState,
+    attendanceUxMessage,
+    isCheckedIn,
+  ]);
+
+  const ctaSecondaryLabel = useMemo(() => {
+    if (isLoading || isGeoChecking || isCheckActionLocked) return null;
+    if (attendanceUxState === "blocked") return "Revalidar ubicación";
+    if (attendanceUxState === "failed") return "Reintentar ahora";
+    if (isSyncingAny) return "Puedes seguir usando la app";
+    if (recentQueuedFeedback) return "Guardado localmente";
+    if (attendanceUxState === "queued") return "Se enviará automáticamente";
+    return isCheckedIn ? "Terminar turno" : "Iniciar turno";
+  }, [
+    isLoading,
+    isGeoChecking,
+    isCheckActionLocked,
+    attendanceUxState,
+    isSyncingAny,
+    recentQueuedFeedback,
+    isCheckedIn,
+  ]);
+  const headerOpsPill = useMemo(() => {
+    const pendingTotal = pendingAttendanceCount + pendingBreakCount;
+    if (isSyncingAny) {
+      return {
+        label: "SYNC",
+        bg: "rgba(242, 198, 192, 0.18)",
+        border: RGBA.borderRose,
+        text: PALETTE.rose,
+      };
+    }
+    if (isOffline) {
+      return {
+        label: "OFFLINE",
+        bg: "rgba(226, 0, 106, 0.08)",
+        border: RGBA.borderPink,
+        text: PALETTE.accent,
+      };
+    }
+    if (pendingTotal > 0) {
+      return {
+        label: `PEND ${pendingTotal}`,
+        bg: PALETTE.porcelain2,
+        border: PALETTE.border,
+        text: PALETTE.neutral,
+      };
+    }
+    return {
+      label: "ONLINE",
+      bg: PALETTE.porcelain2,
+      border: PALETTE.border,
+      text: PALETTE.neutral,
+    };
+  }, [
+    isSyncingAny,
+    isOffline,
+    pendingAttendanceCount,
+    pendingBreakCount,
+  ]);
+  const showHeaderOpsPill = headerOpsPill.label !== "ONLINE";
+
+  const handleOpsPillPress = useCallback(() => {
+    const targetY = Math.max(0, opsSectionY - 12);
+    scrollRef.current?.scrollTo({ y: targetY, animated: true });
+  }, [opsSectionY]);
 
   const initialLoadDoneRef = useRef(false);
   const lastStatusRef = useRef<string | null>(null);
@@ -234,6 +391,29 @@ export default function HomeScreen() {
     }
   }, [geofenceState.status, geofenceState.updatedAt, stuckTimeout]);
 
+  useEffect(() => {
+    if (!stuckTimeout) return;
+    let cancelled = false;
+    const recover = async () => {
+      try {
+        const next = await refreshGeofenceRef.current({ force: true, source: "user" });
+        if (!cancelled && next.status === "checking") {
+          setActionError(
+            "La verificación de ubicación está tardando más de lo normal. Puedes actualizar manualmente o reintentar en unos segundos.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setStuckTimeout(false);
+        }
+      }
+    };
+    void recover();
+    return () => {
+      cancelled = true;
+    };
+  }, [stuckTimeout]);
+
   const realtimeStartedRef = useRef(false);
   const siteRefreshInFlightRef = useRef(false);
   useFocusEffect(
@@ -242,10 +422,10 @@ export default function HomeScreen() {
         siteRefreshInFlightRef.current = true;
         void (async () => {
           try {
-            await refreshEmployee();
-            await refreshGeofence({ force: true, source: "user" });
+            await refreshEmployeeRef.current();
+            await refreshGeofenceRef.current({ force: true, source: "user" });
           } finally {
-            consumePendingSiteChanges();
+            consumePendingSiteChangesRef.current();
             siteRefreshInFlightRef.current = false;
           }
         })();
@@ -253,20 +433,12 @@ export default function HomeScreen() {
 
       if (!user || realtimeStartedRef.current) return;
       realtimeStartedRef.current = true;
-      void startRealtimeGeofence();
+      void startRealtimeGeofenceRef.current();
       return () => {
         realtimeStartedRef.current = false;
-        stopRealtimeGeofence();
+        stopRealtimeGeofenceRef.current();
       };
-    }, [
-      user,
-      hasPendingSiteChanges,
-      refreshEmployee,
-      consumePendingSiteChanges,
-      refreshGeofence,
-      startRealtimeGeofence,
-      stopRealtimeGeofence,
-    ]),
+    }, [user, hasPendingSiteChanges]),
   );
 
   useEffect(() => {
@@ -274,6 +446,12 @@ export default function HomeScreen() {
       setIsSitePickerOpen(true);
     }
   }, [geofenceState.requiresSelection]);
+
+  useEffect(() => {
+    if (!recentQueuedFeedback) return;
+    const timer = setTimeout(() => setRecentQueuedFeedback(false), 8000);
+    return () => clearTimeout(timer);
+  }, [recentQueuedFeedback]);
 
   useEffect(() => {
     if (!isDateModalOpen) return;
@@ -359,10 +537,7 @@ export default function HomeScreen() {
     employee?.fullName?.split(" ")[0] ||
     user?.email?.split("@")[0] ||
     "Usuario";
-  const siteName =
-    attendanceState.currentSiteName ||
-    employee?.siteName ||
-    "Sin sede asignada";
+  const fallbackSiteName = attendanceState.currentSiteName || employee?.siteName || null;
   const avatarInitial = displayName.trim().charAt(0).toUpperCase() || "U";
 
   const todayLabel = useMemo(() => {
@@ -404,6 +579,8 @@ export default function HomeScreen() {
     };
   }, [attendanceState.status, attendanceState.isOnBreak]);
   const geofenceUI = useMemo(() => {
+    if (geofenceState.status === "ready" && geofenceState.isLatchedReady)
+      return { label: "TEMPORAL", highlight: true };
     if (geofenceState.status === "ready")
       return { label: "VERIFICADA", highlight: true };
     if (geofenceState.status === "checking")
@@ -441,6 +618,7 @@ export default function HomeScreen() {
     };
   }, [geofenceState.status]);
   const [currentTime, setCurrentTime] = useState(Date.now());
+  const [latchNow, setLatchNow] = useState(Date.now());
 
   useEffect(() => {
     if (isCheckedIn) {
@@ -450,6 +628,19 @@ export default function HomeScreen() {
       return () => clearInterval(interval);
     }
   }, [isCheckedIn]);
+
+  useEffect(() => {
+    if (!geofenceState.isLatchedReady || !geofenceState.latchExpiresAt) return;
+    const timer = setInterval(() => {
+      setLatchNow(Date.now());
+    }, 30000);
+    return () => clearInterval(timer);
+  }, [geofenceState.isLatchedReady, geofenceState.latchExpiresAt]);
+
+  const latchedRemainingMs = useMemo(() => {
+    if (!geofenceState.isLatchedReady || !geofenceState.latchExpiresAt) return null;
+    return Math.max(0, geofenceState.latchExpiresAt - latchNow);
+  }, [geofenceState.isLatchedReady, geofenceState.latchExpiresAt, latchNow]);
 
   const totalMinutes = useMemo(() => {
     const baseMinutes = Math.max(0, Math.round(attendanceState.todayMinutes ?? 0));
@@ -504,62 +695,12 @@ export default function HomeScreen() {
         return;
       }
 
-      let geo = geofenceState;
-      const needsVerification =
-        geo.status === "idle" || geo.status === "checking" || !geo.canProceed;
-
-      if (needsVerification) {
-        console.log(
-          "[HOME] Geofence not ready, forcing immediate verification...",
-          {
-            status: geo.status,
-            canProceed: geo.canProceed,
-            siteId: geo.siteId,
-          },
-        );
-
-        geo = await refreshGeofence({ force: true, source: "check_action" });
-
-        const maxWait = 8000;
-        const startTime = Date.now();
-        let attempts = 0;
-        const maxAttempts = 6;
-
-        while (
-          (geo.status === "checking" ||
-            geo.status === "idle" ||
-            !geo.canProceed) &&
-          Date.now() - startTime < maxWait &&
-          attempts < maxAttempts &&
-          geo.status !== "blocked" &&
-          geo.status !== "error"
-        ) {
-          console.log(
-            `[HOME] Waiting for geofence (${geo.status})... (attempt ${attempts + 1}/${maxAttempts})`,
-          );
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          geo = await refreshGeofence({ force: true, source: "check_action" });
-          attempts++;
-
-          if (geo.canProceed && geo.status === "ready") break;
-        }
-      }
-
-      if (!geo.canProceed) {
-        const msg =
-          geo.status === "idle"
-            ? "La verificacion de ubicacion no se ha completado. Intenta de nuevo."
-            : geo.message || "Ubicacion no verificada";
-        setActionError(msg);
-        Alert.alert("No se puede registrar", msg);
-        return;
-      }
-
       const result = isCheckedIn ? await checkOut() : await checkIn();
       if (!result.success) {
-        const msg = result.error || "No se pudo completar la accion";
+        const msg = result.error || "No se pudo completar la acción";
         setActionError(msg);
-        Alert.alert("No se puede registrar", msg);
+      } else if (result.queued) {
+        setRecentQueuedFeedback(true);
       }
     } finally {
       checkActionLockRef.current = false;
@@ -578,7 +719,8 @@ export default function HomeScreen() {
     if (!result.success) {
       const msg = result.error || "No se pudo actualizar el descanso";
       setActionError(msg);
-      Alert.alert("Descanso", msg);
+    } else if (result.queued) {
+      setRecentQueuedFeedback(true);
     }
   };
 
@@ -610,6 +752,11 @@ export default function HomeScreen() {
     if (!targetId) return null;
     return employeeSites.find((site) => site.siteId === targetId) ?? null;
   }, [selectedSiteId, employee?.siteId, employeeSites]);
+  const activeSiteName =
+    geofenceState.siteName ||
+    selectedSite?.siteName ||
+    fallbackSiteName ||
+    "Sin sede asignada";
 
   const GLOBAL_REPORT_ROLES = new Set(["propietario", "gerente_general"]);
   const MANAGER_REPORT_SITE_TYPES = new Set(["satellite", "production_center"]);
@@ -1230,96 +1377,237 @@ export default function HomeScreen() {
       >
         <View
           style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
+            ...UI.card,
+            padding: 16,
+            overflow: "hidden",
           }}
         >
-          <View style={{ flex: 1, paddingRight: 12 }}>
-            <Text style={{ fontSize: 13, color: COLORS.neutral }}>
-              {todayLabel}
-            </Text>
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              top: -36,
+              right: -28,
+              width: 132,
+              height: 132,
+              borderRadius: 66,
+              backgroundColor: RGBA.washPink,
+            }}
+          />
+          <View
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              bottom: -44,
+              left: -34,
+              width: 140,
+              height: 140,
+              borderRadius: 70,
+              backgroundColor: RGBA.cardTint,
+            }}
+          />
 
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginTop: 6,
-                gap: 10,
-              }}
-            >
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+            }}
+          >
+            <View style={{ flex: 1, minWidth: 0, paddingRight: 14 }}>
               <Text
-                style={{ fontSize: 26, fontWeight: "800", color: COLORS.text }}
+                style={{
+                  fontSize: 12,
+                  fontWeight: "600",
+                  color: PALETTE.neutral,
+                  letterSpacing: 0.2,
+                }}
+              >
+                {todayLabel}
+              </Text>
+              <Text
+                style={{
+                  fontSize: 34,
+                  fontWeight: "900",
+                  color: PALETTE.text,
+                  marginTop: 4,
+                  lineHeight: 38,
+                }}
+                numberOfLines={1}
               >
                 Hola, {displayName}
               </Text>
+            </View>
 
+            <TouchableOpacity
+              onPress={() => setIsUserMenuOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Abrir menú de usuario"
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={{
+                width: 54,
+                height: 54,
+                borderRadius: 27,
+                backgroundColor: PALETTE.porcelain2,
+                borderWidth: 1,
+                borderColor: PALETTE.border,
+                overflow: "hidden",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {employee?.avatarUrl ? (
+                <Image
+                  source={{ uri: employee.avatarUrl }}
+                  style={{ width: "100%", height: "100%" }}
+                  resizeMode="cover"
+                />
+              ) : (
+                <Text
+                  style={{ fontSize: 18, fontWeight: "900", color: PALETTE.text }}
+                >
+                  {avatarInitial}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          <View
+            style={{
+              flexDirection: "row",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 8,
+              marginTop: 14,
+            }}
+          >
+            <View
+              style={{
+                ...UI.pill,
+                borderColor:
+                  statusUI.tone === "active" ? RGBA.borderPink : PALETTE.border,
+                backgroundColor:
+                  statusUI.tone === "active" ? RGBA.washRoseGlow : PALETTE.porcelain2,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: "900",
+                  color: statusUI.tone === "active" ? PALETTE.accent : PALETTE.neutral,
+                  letterSpacing: 0.45,
+                  textTransform: "uppercase",
+                }}
+              >
+                {statusUI.label}
+              </Text>
+            </View>
+
+            <View
+              style={{
+                ...UI.pill,
+                borderColor: geofencePill.border,
+                backgroundColor: geofencePill.bg,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: "900",
+                  color: geofencePill.text,
+                  letterSpacing: 0.45,
+                  textTransform: "uppercase",
+                }}
+              >
+                {geofenceUI.label}
+              </Text>
+            </View>
+
+            <View
+              style={{
+                ...UI.pill,
+                borderColor: isOffline ? RGBA.borderPink : PALETTE.border,
+                backgroundColor: isOffline ? "rgba(226, 0, 106, 0.08)" : PALETTE.porcelain2,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
               <View
                 style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: 999,
+                  backgroundColor: isOffline ? PALETTE.accent : "#16a34a",
+                }}
+              />
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: "900",
+                  color: isOffline ? PALETTE.accent : PALETTE.neutral,
+                  letterSpacing: 0.45,
+                  textTransform: "uppercase",
+                }}
+              >
+                {isOffline ? "Sin conexión" : "En línea"}
+              </Text>
+            </View>
+
+            <View
+              style={{
+                ...UI.pill,
+                borderColor: hasPendingAny ? RGBA.borderPink : PALETTE.border,
+                backgroundColor: hasPendingAny ? "rgba(226, 0, 106, 0.08)" : PALETTE.porcelain2,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: "900",
+                  color: hasPendingAny ? PALETTE.accent : PALETTE.neutral,
+                  letterSpacing: 0.45,
+                  textTransform: "uppercase",
+                }}
+              >
+                {hasPendingAny
+                  ? `${pendingAttendanceCount + pendingBreakCount} pendientes`
+                  : isSyncingAny
+                    ? "Sincronizando"
+                    : "Al día"}
+              </Text>
+            </View>
+
+            {showHeaderOpsPill ? (
+              <TouchableOpacity
+                onPress={handleOpsPillPress}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={{
                   ...UI.pill,
-                  borderColor:
-                    statusUI.tone === "active"
-                      ? RGBA.borderPink
-                      : PALETTE.border,
+                  backgroundColor: headerOpsPill.bg,
+                  borderColor: headerOpsPill.border,
                 }}
               >
                 <Text
                   style={{
                     fontSize: 11,
-                    fontWeight: "800",
-                    color:
-                      statusUI.tone === "active"
-                        ? PALETTE.accent
-                        : PALETTE.neutral,
-                    letterSpacing: 0.4,
+                    fontWeight: "900",
+                    color: headerOpsPill.text,
+                    letterSpacing: 0.45,
+                    textTransform: "uppercase",
                   }}
                 >
-                  {statusUI.label}
+                  {headerOpsPill.label}
                 </Text>
-              </View>
-            </View>
-
-            <Text style={{ fontSize: 14, color: COLORS.neutral, marginTop: 6 }}>
-              {siteName}
-            </Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
-
-          <TouchableOpacity
-            onPress={() => setIsUserMenuOpen(true)}
-            accessibilityRole="button"
-            accessibilityLabel="Abrir menu de usuario"
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={{
-              width: 46,
-              height: 46,
-              borderRadius: 23,
-              backgroundColor: PALETTE.porcelain2,
-              borderWidth: 1,
-              borderColor: PALETTE.border,
-              overflow: "hidden",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            {employee?.avatarUrl ? (
-              <Image
-                source={{ uri: employee.avatarUrl }}
-                style={{ width: "100%", height: "100%" }}
-                resizeMode="cover"
-              />
-            ) : (
-              <Text
-                style={{ fontSize: 16, fontWeight: "800", color: PALETTE.text }}
-              >
-                {avatarInitial}
-              </Text>
-            )}
-          </TouchableOpacity>
 
         </View>
       </View>
 
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={{
           flexGrow: 1,
           alignSelf: "center",
@@ -1333,6 +1621,11 @@ export default function HomeScreen() {
           <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
         }
       >
+        <View
+          onLayout={(event) => {
+            setOpsSectionY(event.nativeEvent.layout.y);
+          }}
+        />
         
         {isOffline ? (
           <View
@@ -1373,6 +1666,74 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
+        {pendingAttendanceCount > 0 || pendingBreakCount > 0 ? (
+          <View
+            style={{
+              backgroundColor: "white",
+              borderRadius: 14,
+              padding: 14,
+              borderWidth: 1,
+              borderColor: COLORS.border,
+              marginBottom: 12,
+            }}
+          >
+            <Text style={{ fontSize: 14, fontWeight: "800", color: COLORS.text }}>
+              Registros pendientes: {pendingAttendanceCount}
+            </Text>
+            <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
+              {pendingAttendanceFailedCount > 0
+                ? `${pendingAttendanceFailedCount} requieren reintento.`
+                : "Se sincronizarán automáticamente cuando haya conexión estable."}
+            </Text>
+            {pendingAttendanceConflictCount > 0 ? (
+              <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
+                Conflictos detectados: {pendingAttendanceConflictCount} (requieren revisión).
+              </Text>
+            ) : null}
+            {pendingAttendanceOldestCreatedAt ? (
+              <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
+                Pendiente más antiguo: {formatClock(pendingAttendanceOldestCreatedAt)}
+              </Text>
+            ) : null}
+            {pendingAttendanceNextRetryAt ? (
+              <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
+                Próximo reintento: {formatRetryClock(pendingAttendanceNextRetryAt)}
+              </Text>
+            ) : null}
+            {pendingAttendanceLastError ? (
+              <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
+                Último error: {pendingAttendanceLastError}
+              </Text>
+            ) : null}
+            {pendingBreakCount > 0 ? (
+              <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
+                Descansos pendientes: {pendingBreakCount}
+                {pendingBreakFailedCount > 0
+                  ? ` (${pendingBreakFailedCount} con error)`
+                  : ""}
+              </Text>
+            ) : null}
+            <TouchableOpacity
+              onPress={() => {
+                void syncPendingAttendanceQueue({ force: true });
+                void syncPendingBreakQueue({ force: true });
+              }}
+              style={{
+                marginTop: 12,
+                alignSelf: "flex-start",
+                paddingVertical: 10,
+                paddingHorizontal: 14,
+                borderRadius: 12,
+                backgroundColor: COLORS.accent,
+              }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: "800", color: "white" }}>
+                Sincronizar ahora
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
         {actionError ? (
           <View
             style={{
@@ -1391,6 +1752,47 @@ export default function HomeScreen() {
             </Text>
             <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
               {actionError}
+            </Text>
+          </View>
+        ) : null}
+
+        {showAttendanceDiagnostics &&
+        (attendanceDiagnostics.lastErrorStage ||
+          attendanceDiagnostics.lastGeofenceDurationMs != null ||
+          attendanceDiagnostics.lastCheckInDurationMs != null ||
+          attendanceDiagnostics.lastCheckOutDurationMs != null ||
+          attendanceDiagnostics.lastSyncDurationMs != null) ? (
+          <View
+            style={{
+              backgroundColor: "white",
+              borderRadius: 14,
+              padding: 14,
+              borderWidth: 1,
+              borderColor: COLORS.border,
+              marginBottom: 12,
+            }}
+          >
+            <Text style={{ fontSize: 14, fontWeight: "800", color: COLORS.text }}>
+              Diagnóstico de asistencia
+            </Text>
+            <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 6 }}>
+              Geofence: {formatLatency(attendanceDiagnostics.lastGeofenceDurationMs)} | Check-in:{" "}
+              {formatLatency(attendanceDiagnostics.lastCheckInDurationMs)} | Check-out:{" "}
+              {formatLatency(attendanceDiagnostics.lastCheckOutDurationMs)} | Sync:{" "}
+              {formatLatency(attendanceDiagnostics.lastSyncDurationMs)}
+            </Text>
+            {attendanceDiagnostics.lastErrorStage ? (
+              <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
+                Último fallo [{attendanceDiagnostics.lastErrorStage}]:{" "}
+                {attendanceDiagnostics.lastErrorMessage ?? "sin detalle"}
+              </Text>
+            ) : null}
+            <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
+              Conteos - GPS: {attendanceDiagnostics.gpsErrorCount} | Red:{" "}
+              {attendanceDiagnostics.networkErrorCount} | DB:{" "}
+              {attendanceDiagnostics.dbErrorCount} | Permisos:{" "}
+              {attendanceDiagnostics.permissionErrorCount} | Conflictos sync:{" "}
+              {attendanceDiagnostics.syncConflictCount}
             </Text>
           </View>
         ) : null}
@@ -1557,7 +1959,7 @@ export default function HomeScreen() {
                     color: COLORS.text,
                   }}
                 >
-                  {geofenceState.siteName || siteName}
+                  {activeSiteName}
                 </Text>
                 <Text
                   style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}
@@ -1682,13 +2084,27 @@ export default function HomeScreen() {
                 lineHeight: 16,
               }}
             >
-              {isOffline
+              {geofenceState.isLatchedReady
+                ? geofenceState.message ||
+                  "Validación temporal activa. Puedes registrar mientras se restablece la señal."
+                : isOffline
                 ? "Sin conexión o red inestable: el registro puede fallar."
                 : geofenceState.status === "ready"
                   ? "Ubicación verificada. Ya tienes permiso para registrar."
                   : geofenceState.message ||
                     "Verifica tu ubicación para poder registrar."}
             </Text>
+            {geofenceState.isLatchedReady && latchedRemainingMs != null ? (
+              <Text
+                style={{
+                  fontSize: 12,
+                  color: COLORS.neutral,
+                  marginTop: 6,
+                }}
+              >
+                Ventana temporal activa: {formatRemainingShort(latchedRemainingMs)} restantes.
+              </Text>
+            ) : null}
           </View>
 
           <TouchableOpacity
@@ -1729,9 +2145,7 @@ export default function HomeScreen() {
                     letterSpacing: 0.3,
                   }}
                 >
-                  {isGeoChecking
-                    ? "Verificando ubicación..."
-                    : "Registrando..."}
+                  {ctaPrimaryLabel}
                 </Text>
               </View>
             ) : (
@@ -1746,19 +2160,21 @@ export default function HomeScreen() {
                     textTransform: "uppercase",
                   }}
                 >
-                  {isCheckedIn ? "Registrar salida" : "Registrar entrada"}
+                  {ctaPrimaryLabel}
                 </Text>
 
-                <Text
-                  style={{
-                    fontSize: 18,
-                    fontWeight: "800",
-                    color: ctaTextColor,
-                    letterSpacing: 0.2,
-                  }}
-                >
-                  {isCheckedIn ? "Terminar turno" : "Iniciar turno"}
-                </Text>
+                {ctaSecondaryLabel ? (
+                  <Text
+                    style={{
+                      fontSize: 18,
+                      fontWeight: "800",
+                      color: ctaTextColor,
+                      letterSpacing: 0.2,
+                    }}
+                  >
+                    {ctaSecondaryLabel}
+                  </Text>
+                ) : null}
               </View>
             )}
           </TouchableOpacity>

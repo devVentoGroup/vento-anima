@@ -10,12 +10,22 @@ export default function AuthSplashScreen() {
   const { user, employee, isLoading } = useAuth()
   const { loadTodayAttendance, refreshGeofence } = useAttendanceContext()
   const userRef = useRef(user)
+  const loadTodayAttendanceRef = useRef(loadTodayAttendance)
+  const refreshGeofenceRef = useRef(refreshGeofence)
   const [fallbackReady, setFallbackReady] = useState(false)
   const [bootReady, setBootReady] = useState(false)
 
   useEffect(() => {
     userRef.current = user
   }, [user])
+
+  useEffect(() => {
+    loadTodayAttendanceRef.current = loadTodayAttendance
+  }, [loadTodayAttendance])
+
+  useEffect(() => {
+    refreshGeofenceRef.current = refreshGeofence
+  }, [refreshGeofence])
 
   useEffect(() => {
     setBootReady(false)
@@ -45,10 +55,10 @@ export default function AuthSplashScreen() {
 
     const runBootstrap = async () => {
       try {
-        await loadTodayAttendance()
+        await loadTodayAttendanceRef.current()
 
         if (employee) {
-          await refreshGeofence({ force: true, mode: "check_in" })
+          await refreshGeofenceRef.current({ force: true, mode: "check_in" })
         }
       } catch (error) {
         console.warn("[SPLASH] Bootstrap error:", error)
@@ -62,7 +72,7 @@ export default function AuthSplashScreen() {
     return () => {
       cancelled = true
     }
-  }, [isLoading, user, employee, loadTodayAttendance, refreshGeofence])
+  }, [isLoading, user?.id, !!employee])
 
   const isAppReady = (!isLoading && bootReady) || fallbackReady
 

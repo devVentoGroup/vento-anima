@@ -266,7 +266,7 @@ export async function getValidatedLocation(opts?: {
     if (!isEnabled) {
       return {
         success: false,
-        error: "Los servicios de ubicación están desactivados. Activalos en configuracion.",
+        error: "Los servicios de ubicación están desactivados. Actívalos en configuración.",
         errorCode: "LOCATION_UNAVAILABLE",
       }
     }
@@ -330,7 +330,7 @@ export async function getValidatedLocation(opts?: {
     if (accuracy > maxAccuracyMeters) {
       return {
         success: false,
-        error: `ubicación imprecisa (${Math.round(accuracy)}m). Sal al exterior o espera a mejor señal GPS.`,
+        error: `Ubicación imprecisa (${Math.round(accuracy)}m). Sal al exterior o espera una mejor señal GPS.`,
         errorCode: "ACCURACY_TOO_LOW",
       }
     }
@@ -382,7 +382,7 @@ export async function getValidatedLocation(opts?: {
     if (hasBlockingWarnings) {
       return {
         success: false,
-        error: "ubicación no valida. Asegúrate de usar tu ubicación real.",
+        error: "Ubicación no válida. Asegúrate de usar tu ubicación real.",
         errorCode: "SPOOFING_DETECTED",
         location: validatedLocation,
       }

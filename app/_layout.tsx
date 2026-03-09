@@ -1,5 +1,6 @@
 import { Stack } from "expo-router"
 import { StatusBar } from "expo-status-bar"
+import Constants from "expo-constants"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { SafeAreaProvider } from "react-native-safe-area-context"
 
@@ -9,7 +10,9 @@ import { AppUpdateGate } from "@/components/AppUpdateGate"
 import { useAppUpdatePolicy } from "@/hooks/use-app-update-policy"
 
 export default function RootLayout() {
-  const { updateInfo, openStore, dismissOptionalUpdate } = useAppUpdatePolicy("vento_anima")
+  const appUpdateKey =
+    (Constants.expoConfig?.extra?.appUpdateKey as string | undefined) ?? "vento_anima"
+  const { updateInfo, openStore, dismissOptionalUpdate } = useAppUpdatePolicy(appUpdateKey)
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

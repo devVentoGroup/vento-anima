@@ -49,7 +49,7 @@ export function SitePickerModal({
             Selecciona tu sede
           </Text>
           <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 6 }}>
-            Est·s cerca de varias sedes. Elige la correcta para continuar.
+            Est√°s cerca de varias sedes. Elige la correcta para continuar.
           </Text>
 
           <View style={{ marginTop: 12, gap: 10 }}>
@@ -100,4 +100,5 @@ export function SitePickerModal({
     </Modal>
   )
 }
+
 
