@@ -104,6 +104,8 @@ serve(async (req) => {
     title?: string
     body?: string
     tag?: string
+    site_ids?: string[]
+    roles?: string[]
   } = {}
   try {
     payload = await req.json()
@@ -118,6 +120,12 @@ serve(async (req) => {
   const body = payload.body?.trim()
   const announcementId = payload.announcement_id?.trim() || null
   const tag = payload.tag?.trim() || "INFO"
+  const siteIds = Array.isArray(payload.site_ids)
+    ? payload.site_ids.filter((id): id is string => typeof id === "string" && id.length > 0)
+    : []
+  const roles = Array.isArray(payload.roles)
+    ? payload.roles.filter((r): r is string => typeof r === "string" && r.length > 0)
+    : []
 
   if (!title || !body) {
     return new Response(JSON.stringify({ error: "Missing fields" }), {
@@ -126,10 +134,18 @@ serve(async (req) => {
     })
   }
 
-  const { data: activeEmployees, error: employeesError } = await supabase
+  let query = supabase
     .from("employees")
     .select("id")
     .eq("is_active", true)
+  if (siteIds.length > 0) {
+    query = query.in("site_id", siteIds)
+  }
+  if (roles.length > 0) {
+    query = query.in("role", roles)
+  }
+
+  const { data: activeEmployees, error: employeesError } = await query
 
   if (employeesError) {
     return new Response(JSON.stringify({ error: employeesError.message }), {

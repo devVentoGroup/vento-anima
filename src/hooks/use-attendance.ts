@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import * as Haptics from "expo-haptics"
 import * as Location from "expo-location"
 import * as SecureStore from "expo-secure-store"
-import { AppState } from "react-native"
+import { Alert, AppState } from "react-native"
 
 import { supabase } from "@/lib/supabase"
 import {
@@ -14,6 +14,7 @@ import {
 } from "@/lib/geolocation"
 import { getUserFacingAttendanceError } from "@/utils/error-messages"
 import { useAuth } from "@/contexts/auth-context"
+import { useAttendancePolicy } from "@/hooks/use-attendance-policy"
 
 function isLikelyOfflineError(err: unknown): boolean {
   if (!err) return false
@@ -83,6 +84,8 @@ export interface AttendanceState {
   snapshotAt: string | null
   openStartAt: string | null
   currentSiteName: string | null
+  /** Sede del check-in actual (o del último check-in del día si ya hizo check-out). Para integrar con turno del día. */
+  currentSiteId: string | null
 }
 
 export interface CheckInOutResult {
@@ -97,7 +100,7 @@ export type GeofenceMode = "check_in" | "check_out"
 export interface SiteCandidate {
   id: string
   name: string
-  distanceMeters: number
+  distanceMeters: number | null
   effectiveRadiusMeters: number
   requiresGeolocation: boolean
 }
@@ -156,6 +159,8 @@ type AttendanceInsertPayload = {
   device_info: Record<string, unknown> | null
   notes: string | null
   occurred_at: string
+  /** Turno programado del día en esta sede (opcional); relaciona check-in con turno. */
+  shift_id?: string | null
 }
 
 type QueueSyncDecision =
@@ -465,6 +470,7 @@ function getOverlapMinutes(
 
 export function useAttendance() {
   const { user, employee, employeeSites, selectedSiteId, setSelectedSite } = useAuth()
+  const { policy: attendancePolicy } = useAttendancePolicy()
 
   const [attendanceState, setAttendanceState] = useState<AttendanceState>({
     status: "not_checked_in",
@@ -479,6 +485,7 @@ export function useAttendance() {
     snapshotAt: null,
     openStartAt: null,
     currentSiteName: null,
+    currentSiteId: null,
   })
 
   const [isLoading, setIsLoading] = useState(false)
@@ -513,6 +520,7 @@ export function useAttendance() {
   const departureEventInFlightRef = useRef(false)
   const departureLastCheckAtRef = useRef(0)
   const departureLoggedShiftKeyRef = useRef<string | null>(null)
+  const departureAutoCheckoutNotifiedShiftRef = useRef<string | null>(null)
 
   const [geofenceState, setGeofenceState] = useState<GeofenceCheckState>({
     status: "idle",
@@ -538,6 +546,7 @@ export function useAttendance() {
   useEffect(() => {
     if (attendanceState.status !== "checked_in") {
       departureLoggedShiftKeyRef.current = null
+      departureAutoCheckoutNotifiedShiftRef.current = null
     }
   }, [attendanceState.status])
 
@@ -589,14 +598,30 @@ export function useAttendance() {
       }
 
       const hasCoordinates = data.latitude != null && data.longitude != null
-      const requiresGeolocation = hasCoordinates
+      let radiusMeters = data.checkin_radius_meters ?? 0
+      let requiresGeolocation = hasCoordinates
+      try {
+        const { data: policyRow } = await supabase
+          .from("site_attendance_policy")
+          .select("checkin_radius_meters, requires_geofence")
+          .eq("site_id", siteId)
+          .maybeSingle()
+        if (policyRow) {
+          if (policyRow.checkin_radius_meters != null)
+            radiusMeters = Number(policyRow.checkin_radius_meters)
+          if (policyRow.requires_geofence != null)
+            requiresGeolocation = Boolean(policyRow.requires_geofence)
+        }
+      } catch {
+        // Tabla inexistente o sin permiso: usar solo datos de sites
+      }
       const result = {
         site: {
           id: data.id,
           name: data.name,
           latitude: data.latitude ?? 0,
           longitude: data.longitude ?? 0,
-          radiusMeters: data.checkin_radius_meters ?? 0,
+          radiusMeters,
           requiresGeolocation,
         },
         hasCoordinates,
@@ -618,13 +643,14 @@ export function useAttendance() {
     site_id: string
     site_name: string | null
     source: string | null
+    shift_id: string | null
     client_event_id: string | null
   } | null> => {
     if (!user) return null
 
     const { data, error } = await supabase
       .from("attendance_logs")
-      .select("action, occurred_at, site_id, source, device_info, sites(name)")
+      .select("action, occurred_at, site_id, source, shift_id, device_info, sites(name)")
       .eq("employee_id", user.id)
       .order("occurred_at", { ascending: false })
       .order("created_at", { ascending: false })
@@ -639,9 +665,29 @@ export function useAttendance() {
       site_id: data.site_id,
       site_name: (data.sites as any)?.name ?? null,
       source: data.source ?? null,
+      shift_id: (data as any)?.shift_id ?? null,
       client_event_id: (data as any)?.device_info?.clientEventId ?? null,
     }
   }, [user])
+
+  /** Turno publicado del día para este empleado en esta sede (para relacionar check-in con turno). */
+  const getTodayShiftIdForSite = useCallback(
+    async (employeeId: string, siteId: string): Promise<string | null> => {
+      const today = new Date().toISOString().slice(0, 10)
+      const { data, error } = await supabase
+        .from("employee_shifts")
+        .select("id")
+        .eq("employee_id", employeeId)
+        .eq("site_id", siteId)
+        .eq("shift_date", today)
+        .not("published_at", "is", null)
+        .limit(1)
+        .maybeSingle()
+      if (error || !data) return null
+      return (data as { id: string }).id
+    },
+    []
+  )
 
   const loadPendingAttendanceQueue = useCallback(async (): Promise<PendingAttendanceEvent[]> => {
     if (!user) return []
@@ -760,7 +806,10 @@ export function useAttendance() {
     if (!state.canProceed || state.status !== "ready" || !state.siteId || !state.updatedAt) return
     if (state.distanceMeters == null || state.accuracyMeters == null) return
 
-    const ttlMs = getGeofenceLatchTtlMs(state.mode)
+    const ttlMs =
+      state.mode === "check_in"
+        ? attendancePolicy.geofence_latch_ttl_checkin_ms
+        : attendancePolicy.geofence_latch_ttl_checkout_ms
     geofenceLatchRef.current = {
       siteId: state.siteId,
       grantedAt: new Date(state.updatedAt).toISOString(),
@@ -768,7 +817,7 @@ export function useAttendance() {
       distanceMeters: state.distanceMeters,
       accuracy: state.accuracyMeters,
     }
-  }, [])
+  }, [attendancePolicy.geofence_latch_ttl_checkin_ms, attendancePolicy.geofence_latch_ttl_checkout_ms])
 
   const clearExpiredLatch = useCallback(() => {
     const current = geofenceLatchRef.current
@@ -809,7 +858,11 @@ export function useAttendance() {
       siteId?: string | null,
       maxAgeMs?: number
     ): GeofenceCheckState | null => {
-      const effectiveMaxAgeMs = maxAgeMs ?? getGeofenceLatchTtlMs(mode)
+      const latchTtlMs =
+        mode === "check_in"
+          ? attendancePolicy.geofence_latch_ttl_checkin_ms
+          : attendancePolicy.geofence_latch_ttl_checkout_ms
+      const effectiveMaxAgeMs = maxAgeMs ?? latchTtlMs
       const cached = geofenceCacheRef.current
       if (!cached) return null
       if (cached.status !== "ready" || !cached.canProceed) return null
@@ -818,7 +871,7 @@ export function useAttendance() {
       if (siteId && cached.siteId !== siteId) return null
       return cached
     },
-    []
+    [attendancePolicy.geofence_latch_ttl_checkin_ms, attendancePolicy.geofence_latch_ttl_checkout_ms]
   )
 
   const buildLatchedReadyState = useCallback(
@@ -828,7 +881,10 @@ export function useAttendance() {
       reason: "network" | "location"
     ): GeofenceCheckState => {
       const ageMs = Date.now() - (cachedReady.updatedAt ?? Date.now())
-      const maxMs = getGeofenceLatchTtlMs(cachedReady.mode)
+      const maxMs =
+        cachedReady.mode === "check_in"
+          ? attendancePolicy.geofence_latch_ttl_checkin_ms
+          : attendancePolicy.geofence_latch_ttl_checkout_ms
       const remainingMs = Math.max(0, maxMs - ageMs)
       const remainingMin = Math.max(1, Math.ceil(remainingMs / 60000))
       const reasonText =
@@ -843,7 +899,7 @@ export function useAttendance() {
         message: `Ubicación verificada recientemente (${reasonText}). Puedes registrar por ${remainingMin} min.`,
       }
     },
-    []
+    [attendancePolicy.geofence_latch_ttl_checkin_ms, attendancePolicy.geofence_latch_ttl_checkout_ms]
   )
 
   const insertAttendanceLogWithRetry = useCallback(
@@ -902,6 +958,7 @@ export function useAttendance() {
         snapshotAt: null,
         openStartAt: null,
         currentSiteName: null,
+        currentSiteId: null,
       })
       return
     }
@@ -955,6 +1012,7 @@ export function useAttendance() {
 
     let status: AttendanceStatus = "not_checked_in"
     let currentSiteName: string | null = null
+    let currentSiteId: string | null = null
     let lastCheckIn: string | null = null
     let lastCheckOut: string | null = null
     let openStartAt: string | null = null
@@ -962,6 +1020,7 @@ export function useAttendance() {
     if (lastLog?.action === "check_in") {
       status = "checked_in"
       currentSiteName = lastLog.site_name
+      currentSiteId = (lastLog as { site_id?: string })?.site_id ?? null
       lastCheckIn = lastLog.occurred_at
 
       if (lastTodayCheckIn) {
@@ -975,6 +1034,8 @@ export function useAttendance() {
       }
     } else if (lastLog?.action === "check_out") {
       if (lastTodayCheckIn) {
+        const logWithSiteId = lastTodayCheckIn as { site_id?: string; sites?: { name: string } }
+        currentSiteId = logWithSiteId?.site_id ?? null
         if (
           !lastTodayCheckOut ||
           new Date(lastTodayCheckIn.occurred_at) > new Date(lastTodayCheckOut.occurred_at)
@@ -1061,6 +1122,7 @@ export function useAttendance() {
       snapshotAt: new Date(nowMs).toISOString(),
       openStartAt,
       currentSiteName,
+      currentSiteId,
     })
     setIsOffline(false)
   }, [user, getLastAttendanceLog])
@@ -1120,6 +1182,7 @@ export function useAttendance() {
             snapshotAt,
             openStartAt: payload.occurred_at,
             currentSiteName: siteName ?? prev.currentSiteName,
+            currentSiteId: payload.site_id ?? prev.currentSiteId,
           }
         }
         return {
@@ -1229,6 +1292,7 @@ export function useAttendance() {
         notes: item.payload.notes,
         geoSnapshot: item.geoSnapshot,
         deviceInfo: item.payload.device_info,
+        ...(item.payload.shift_id ? { shiftId: item.payload.shift_id } : {}),
       }
 
       try {
@@ -1609,7 +1673,11 @@ export function useAttendance() {
       const lastLog = args?.mode ? null : await getLastAttendanceLog()
       mode = args?.mode ?? (lastLog?.action === "check_in" ? "check_out" : "check_in")
 
-      const policy = mode === "check_out" ? ATTENDANCE_GEOFENCE.checkOut : ATTENDANCE_GEOFENCE.checkIn
+      const maxAccuracyMeters =
+        mode === "check_out"
+          ? attendancePolicy.geofence_check_out_max_accuracy_meters
+          : attendancePolicy.geofence_check_in_max_accuracy_meters
+      const policy = { maxAccuracyMeters }
 
             // Filtrar sedes: si tiene coordenadas, usa GPS; si no, no requiere GPS
       const assignedGeoSites = employeeSites.filter((item) =>
@@ -1622,6 +1690,52 @@ export function useAttendance() {
       const selectedSiteIsValid =
         selectedSiteId != null && employeeSites.some((item) => item.siteId === selectedSiteId)
       const effectiveSelectedSiteId = selectedSiteIsValid ? selectedSiteId : null
+
+      const resolveBestEffortSelectionLocation = async (): Promise<ValidatedLocation | null> => {
+        if (location) return location
+
+        try {
+          const permissions = await Location.getForegroundPermissionsAsync()
+          if (permissions.status !== "granted") {
+            const requested = await Location.requestForegroundPermissionsAsync()
+            if (requested.status !== "granted") return null
+          }
+        } catch {
+          return null
+        }
+
+        try {
+          const lastKnown = await Location.getLastKnownPositionAsync({
+            maxAge: 2 * 60 * 1000,
+            requiredAccuracy: 150,
+          })
+          if (lastKnown) {
+            return buildValidatedLocationFromRaw(lastKnown)
+          }
+        } catch {
+          // Best-effort only: if last known position is unavailable, continue silently.
+        }
+
+        try {
+          const currentPosition = (await Promise.race([
+            Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.Balanced,
+              mayShowUserSettingsDialog: true,
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("TIMEOUT")), 7000)
+            ),
+          ])) as Location.LocationObject
+
+          if (currentPosition?.coords) {
+            return buildValidatedLocationFromRaw(currentPosition)
+          }
+        } catch {
+          // Best-effort only: if active GPS fix fails, caller will show "distancia no disponible".
+        }
+
+        return null
+      }
 
       const buildSelectionCandidates = (baseLocation: ValidatedLocation | null): SiteCandidate[] =>
         employeeSites.map((item) => {
@@ -1637,7 +1751,7 @@ export function useAttendance() {
                     item.longitude as number
                   )
                 )
-              : 0
+              : null
 
           return {
             id: item.siteId,
@@ -1659,6 +1773,7 @@ export function useAttendance() {
           if (effectiveSelectedSiteId) {
             siteId = effectiveSelectedSiteId
           } else {
+            const selectionLocation = await resolveBestEffortSelectionLocation()
             const next: GeofenceCheckState = {
               status: "blocked",
               canProceed: false,
@@ -1667,14 +1782,14 @@ export function useAttendance() {
               siteId: null,
               siteName: null,
               distanceMeters: null,
-              accuracyMeters: location?.accuracy ?? null,
+              accuracyMeters: selectionLocation?.accuracy ?? null,
               effectiveRadiusMeters: null,
               message: "Selecciona una sede para continuar",
               updatedAt: now,
-              location: location ?? null,
-              deviceInfo: buildDeviceInfoPayload(location ?? null),
+              location: selectionLocation ?? null,
+              deviceInfo: buildDeviceInfoPayload(selectionLocation ?? null),
               requiresSelection: true,
-              candidateSites: buildSelectionCandidates(location ?? null),
+              candidateSites: buildSelectionCandidates(selectionLocation ?? null),
             }
             geofenceCacheRef.current = next
             setGeofenceState(next)
@@ -1722,7 +1837,7 @@ export function useAttendance() {
         cached.mode === mode &&
         cached.siteId === siteId &&
         cached.updatedAt != null &&
-        now - cached.updatedAt <= GEOFENCE_READY_CACHE_MS
+        now - cached.updatedAt <= attendancePolicy.geofence_ready_cache_ms
 
       if (canReuse) return cached
 
@@ -2079,6 +2194,9 @@ export function useAttendance() {
       employee,
       employeeSites,
       selectedSiteId,
+      attendancePolicy.geofence_check_in_max_accuracy_meters,
+      attendancePolicy.geofence_check_out_max_accuracy_meters,
+      attendancePolicy.geofence_ready_cache_ms,
       getLastAttendanceLog,
       resolveSite,
       canReuseRecentReadyGeofence,
@@ -2172,6 +2290,9 @@ export function useAttendance() {
       const deviceInfo = geo.deviceInfo
       const clientEventId = buildClientEventId("check_in")
 
+      const shiftId =
+        (await getTodayShiftIdForSite(user.id, geo.siteId)) ?? undefined
+
       const payload: AttendanceInsertPayload = {
         employee_id: user.id,
         site_id: geo.siteId,
@@ -2186,6 +2307,7 @@ export function useAttendance() {
         },
         notes: null,
         occurred_at: new Date().toISOString(),
+        ...(shiftId ? { shift_id: shiftId } : {}),
       }
 
       await insertAttendanceLogWithRetry(payload)
@@ -2221,6 +2343,8 @@ export function useAttendance() {
         canQueueByPolicy({ networkError: offline, latchValid, eventType: "check_in" })
       ) {
         const clientEventId = buildClientEventId("check_in")
+        const shiftId =
+          (await getTodayShiftIdForSite(user.id, lastGeo.siteId)) ?? undefined
         const payload: AttendanceInsertPayload = {
           employee_id: user.id,
           site_id: lastGeo.siteId,
@@ -2236,6 +2360,7 @@ export function useAttendance() {
           },
           notes: null,
           occurred_at: new Date().toISOString(),
+          ...(shiftId ? { shift_id: shiftId } : {}),
         }
         await enqueuePendingAttendanceEvent(payload, err)
         applyOptimisticAttendanceUpdate(payload, lastGeo.siteName ?? null)
@@ -2260,6 +2385,7 @@ export function useAttendance() {
     employee,
     pendingAttendanceQueue,
     getLastAttendanceLog,
+    getTodayShiftIdForSite,
     refreshGeofence,
     canReuseRecentReadyGeofence,
     canQueueByPolicy,
@@ -2377,6 +2503,7 @@ export function useAttendance() {
               },
               notes: null,
               occurred_at: nowIso,
+              ...(lastLog.shift_id ? { shift_id: lastLog.shift_id } : {}),
             }
             await enqueuePendingAttendanceEvent(queuedPayload, breakCloseError)
             applyOptimisticAttendanceUpdate(queuedPayload, lastLog.site_name ?? null)
@@ -2405,6 +2532,7 @@ export function useAttendance() {
         },
         notes: null,
         occurred_at: new Date().toISOString(),
+        ...(lastLog.shift_id ? { shift_id: lastLog.shift_id } : {}),
       }
 
       await insertAttendanceLogWithRetry(payload)
@@ -2455,6 +2583,7 @@ export function useAttendance() {
           },
           notes: null,
           occurred_at: new Date().toISOString(),
+          ...(lastLog.shift_id ? { shift_id: lastLog.shift_id } : {}),
         }
         await enqueuePendingAttendanceEvent(payload, err)
         applyOptimisticAttendanceUpdate(payload, lastLog.site_name ?? null)
@@ -2679,13 +2808,16 @@ export function useAttendance() {
       }
 
       const now = Date.now()
-      if (now - departureLastCheckAtRef.current < SHIFT_DEPARTURE_TRACKING.minCheckIntervalMs) {
+      if (
+        now - departureLastCheckAtRef.current <
+        attendancePolicy.shift_departure_min_check_interval_ms
+      ) {
         return
       }
       departureLastCheckAtRef.current = now
 
       const accuracy = location.accuracy ?? 999
-      if (accuracy > SHIFT_DEPARTURE_TRACKING.maxAccuracyMeters) return
+      if (accuracy > attendancePolicy.shift_departure_max_accuracy_meters) return
 
       const lastLog = await getLastAttendanceLog()
       if (!lastLog || lastLog.action !== "check_in") return
@@ -2703,7 +2835,8 @@ export function useAttendance() {
         resolved.site.latitude,
         resolved.site.longitude,
       )
-      const isOutside = distanceMeters + accuracy >= SHIFT_DEPARTURE_TRACKING.thresholdMeters
+      const isOutside =
+        distanceMeters + accuracy >= attendancePolicy.shift_departure_threshold_meters
       if (!isOutside) return
 
       departureEventInFlightRef.current = true
@@ -2719,7 +2852,7 @@ export function useAttendance() {
           p_source: getAttendanceSource(),
           p_notes: null,
           p_occurred_at: occurredAtIso,
-          p_auto_checkout_threshold_meters: SHIFT_DEPARTURE_TRACKING.thresholdMeters,
+          p_auto_checkout_threshold_meters: attendancePolicy.shift_departure_threshold_meters,
         })
         data = autoCloseResult.data
         error = autoCloseResult.error
@@ -2743,9 +2876,46 @@ export function useAttendance() {
           return
         }
 
-        const payload = (data as { inserted?: boolean; reason?: string } | null) ?? null
-        if (payload?.inserted || payload?.reason === "already_recorded") {
+        const payload = (data as {
+          inserted?: boolean
+          reason?: string | null
+          auto_checkout_applied?: boolean
+          auto_checkout_reason?: string | null
+        } | null) ?? null
+
+        const autoCheckoutApplied = payload?.auto_checkout_applied === true
+        if (autoCheckoutApplied) {
           departureLoggedShiftKeyRef.current = shiftKey
+          if (departureAutoCheckoutNotifiedShiftRef.current !== shiftKey) {
+            departureAutoCheckoutNotifiedShiftRef.current = shiftKey
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)
+            Alert.alert(
+              "Turno cerrado automáticamente",
+              "Detectamos que te alejaste de la sede sin estar en descanso. Se registró salida automática."
+            )
+          }
+          await loadTodayAttendance()
+          return
+        }
+
+        // Si ya no hay turno abierto o el evento quedó registrado antes, evitamos ruido local.
+        if (payload?.reason === "no_open_shift" || payload?.reason === "on_break") {
+          departureLoggedShiftKeyRef.current = shiftKey
+          return
+        }
+
+        if (payload?.reason === "already_recorded") {
+          // Mantener monitoreo activo; el backend puede autocerrar en un intento posterior.
+          console.warn(
+            "[ATTENDANCE] Evento de salida ya existía pero aún no hubo auto check-out. Seguimos monitoreando."
+          )
+          return
+        }
+
+        if (payload?.inserted && !autoCheckoutApplied) {
+          console.warn(
+            "[ATTENDANCE] Evento de salida registrado sin auto check-out aplicado. Se reintentará automáticamente."
+          )
         }
       } catch (err) {
         console.warn("[ATTENDANCE] Error registrando salida de sede:", err)
@@ -2758,8 +2928,12 @@ export function useAttendance() {
       employee,
       attendanceState.status,
       attendanceState.isOnBreak,
+      attendancePolicy.shift_departure_min_check_interval_ms,
+      attendancePolicy.shift_departure_max_accuracy_meters,
+      attendancePolicy.shift_departure_threshold_meters,
       getLastAttendanceLog,
       resolveSite,
+      loadTodayAttendance,
     ],
   )
 

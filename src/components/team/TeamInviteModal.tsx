@@ -187,6 +187,16 @@ export default function TeamInviteModal({
                 </View>
               </TouchableOpacity>
 
+              <Text style={styles.modalLabel}>Expira</Text>
+              <TextInput
+                value={form.expiresAt}
+                onChangeText={(value) => onUpdateForm({ expiresAt: value })}
+                placeholder="Opcional, ej. 2026-03-20"
+                placeholderTextColor={COLORS.neutral}
+                style={styles.input}
+                keyboardType="numbers-and-punctuation"
+              />
+
               {hasInvite ? (
                 <View style={styles.successBox}>
                   <Text style={styles.successTitle}>

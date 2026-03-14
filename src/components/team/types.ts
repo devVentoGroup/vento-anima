@@ -36,4 +36,6 @@ export type InviteFormState = {
   fullName: string;
   role: string;
   siteId: string | null;
+  /** Fecha de vencimiento de la invitación (YYYY-MM-DD). Opcional. */
+  expiresAt: string;
 };

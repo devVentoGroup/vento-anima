@@ -8,6 +8,11 @@ type EmployeeRow = {
   site_id: string | null
 }
 
+type ShiftPolicyRow = {
+  late_grace_minutes: number | null
+  auto_checkout_grace_minutes_after_end: number | null
+}
+
 type EmployeeRelation = {
   full_name: string | null
   alias: string | null
@@ -25,6 +30,7 @@ type AttendanceRow = {
   source: string | null
   notes: string | null
   occurred_at: string
+  shift_id: string | null
   employees: EmployeeRelation | EmployeeRelation[] | null
   sites: SiteRelation | SiteRelation[] | null
 }
@@ -46,17 +52,37 @@ type ShiftEventRow = {
   notes: string | null
 }
 
-type ShiftRecord = {
+type ScheduledShiftRow = {
+  id: string
+  employee_id: string
+  site_id: string
+  shift_date: string
+  start_time: string
+  end_time: string
+  break_minutes: number | null
+  notes: string | null
+  status: string
+  published_at: string | null
+  employees: EmployeeRelation | EmployeeRelation[] | null
+  sites: SiteRelation | SiteRelation[] | null
+}
+
+type AttendanceSession = {
+  key: string
   employeeId: string
   employeeName: string
   alias: string
   role: string
+  siteId: string
   siteName: string
-  shiftStartAt: string
-  shiftEndAt: string
+  shiftId: string | null
+  checkInAt: string
+  checkInSource: string | null
+  checkOutAt: string | null
+  checkOutSource: string | null
+  checkOutNotes: string | null
+  effectiveEndAt: string
   status: "Cerrado" | "Abierto"
-  shiftEndSource: string | null
-  shiftEndNotes: string | null
   grossMinutes: number
   breakMinutes: number
   netMinutes: number
@@ -64,8 +90,47 @@ type ShiftRecord = {
   departureAt: string | null
   departureDistanceMeters: number | null
   isAutoClose: boolean
-  autoCloseAt: string | null
-  observations: string
+  observations: string[]
+}
+
+type ConsolidatedShiftRecord = {
+  shiftId: string
+  employeeId: string
+  employeeName: string
+  alias: string
+  role: string
+  siteId: string
+  siteName: string
+  shiftDate: string
+  scheduledStartAt: string
+  scheduledEndAt: string
+  scheduledBreakMinutes: number
+  scheduledNetMinutes: number
+  shiftStatus: string
+  publishedAt: string | null
+  checkInAt: string | null
+  checkInSource: string | null
+  checkOutAt: string | null
+  checkOutSource: string | null
+  checkOutNotes: string | null
+  actualGrossMinutes: number
+  actualBreakMinutes: number
+  actualNetMinutes: number
+  breakRangesLabel: string
+  attendanceStatus: string
+  closureStatus: string
+  lateMinutes: number
+  leftEarlyMinutes: number
+  overtimeMinutes: number
+  isLate: boolean
+  isNoShow: boolean
+  isOpen: boolean
+  isAutoClose: boolean
+  hasDepartureEvent: boolean
+  departureAt: string | null
+  departureDistanceMeters: number | null
+  matchedBy: "shift_id" | "window" | "none"
+  observations: string[]
 }
 
 type EmployeeSummary = {
@@ -74,22 +139,71 @@ type EmployeeSummary = {
   alias: string
   role: string
   sites: string[]
-  shifts: number
-  workDays: number
-  grossMinutes: number
-  breakMinutes: number
-  netMinutes: number
-  departureCount: number
+  scheduledShifts: number
+  attendedShifts: number
+  lateCount: number
+  noShowCount: number
+  openCount: number
+  missingCloseCount: number
   autoCloseCount: number
-  openShiftCount: number
+  departureCount: number
+  scheduledMinutes: number
+  netMinutes: number
+  incidentCount: number
+}
+
+type SiteSummary = {
+  siteId: string
+  siteName: string
+  scheduledShifts: number
+  attendedShifts: number
+  lateCount: number
+  noShowCount: number
+  openCount: number
+  missingCloseCount: number
+  autoCloseCount: number
+  departureCount: number
+  scheduledMinutes: number
+  netMinutes: number
+  incidentCount: number
+}
+
+type IncidentRow = {
+  category: string
+  shiftDate: string
+  siteName: string
+  employeeName: string
+  scheduledRange: string
+  actualRange: string
+  status: string
+  detail: string
+}
+
+type ReportSummary = {
+  scheduledShifts: number
+  attendedShifts: number
+  lateCount: number
+  noShowCount: number
+  openCount: number
+  missingCloseCount: number
+  autoCloseCount: number
+  departureCount: number
+  scheduledMinutes: number
+  netMinutes: number
+  attendanceRate: number
+  punctualityRate: number
 }
 
 const ALLOWED_GLOBAL_ROLES = new Set(["propietario", "gerente_general"])
 const MANAGER_ROLE = "gerente"
 const MANAGER_ALLOWED_SITE_TYPES = new Set(["satellite", "production_center"])
 const SHIFT_LEAVE_EVENT_TYPE = "left_site_open_shift"
-
 const DEFAULT_REPORT_TIME_ZONE = "America/Bogota"
+const DEFAULT_LATE_GRACE_MINUTES = 5
+const DEFAULT_AUTO_CLOSE_GRACE_MINUTES = 30
+const MATCH_WINDOW_BEFORE_MINUTES = 360
+const MATCH_WINDOW_AFTER_MINUTES = 720
+const QUERY_BUFFER_HOURS = 36
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -163,8 +277,136 @@ function minutesToClock(value: number): string {
   return `${hours}:${minutes.toString().padStart(2, "0")}`
 }
 
-function buildShiftKey(employeeId: string, shiftStartAtIso: string): string {
-  return `${employeeId}|${new Date(shiftStartAtIso).getTime()}`
+function minutesToLabel(value: number): string {
+  const total = safeMinutes(value)
+  if (total === 0) return "0 min"
+  const hours = Math.floor(total / 60)
+  const minutes = total % 60
+  if (hours > 0) {
+    return `${hours}h ${minutes.toString().padStart(2, "0")}m`
+  }
+  return `${minutes} min`
+}
+
+function formatSignedMinutes(value: number): string {
+  if (!Number.isFinite(value) || value === 0) return "0 min"
+  const sign = value > 0 ? "+" : "-"
+  return `${sign}${minutesToLabel(Math.abs(value))}`
+}
+
+function sanitizeSheetName(base: string, used: Set<string>): string {
+  const clean = base.replace(/[\\/*?:[\]]/g, " ").replace(/\s+/g, " ").trim() || "Empleado"
+  let candidate = clean.slice(0, 31)
+  let index = 2
+  while (used.has(candidate)) {
+    const suffix = ` (${index})`
+    candidate = `${clean.slice(0, Math.max(1, 31 - suffix.length))}${suffix}`
+    index += 1
+  }
+  used.add(candidate)
+  return candidate
+}
+
+function parseDateOnly(value: string) {
+  const [year, month, day] = value.split("-").map(Number)
+  return { year, month, day }
+}
+
+function parseTimeOnly(value: string) {
+  const [hour, minute, second] = value.split(":").map((part) => Number(part))
+  return {
+    hour: Number.isFinite(hour) ? hour : 0,
+    minute: Number.isFinite(minute) ? minute : 0,
+    second: Number.isFinite(second) ? second : 0,
+  }
+}
+
+function getZonedParts(value: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(value)
+
+  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? 0)
+  return {
+    year: get("year"),
+    month: get("month"),
+    day: get("day"),
+    hour: get("hour"),
+    minute: get("minute"),
+    second: get("second"),
+  }
+}
+
+function zonedLocalToUtc(dateValue: string, timeValue: string, timeZone: string): string {
+  const { year, month, day } = parseDateOnly(dateValue)
+  const desiredTime = parseTimeOnly(timeValue)
+
+  let guessMs = Date.UTC(
+    year,
+    Math.max(0, month - 1),
+    day,
+    desiredTime.hour,
+    desiredTime.minute,
+    desiredTime.second,
+  )
+
+  for (let i = 0; i < 2; i += 1) {
+    const zoned = getZonedParts(new Date(guessMs), timeZone)
+    const desiredMs = Date.UTC(
+      year,
+      Math.max(0, month - 1),
+      day,
+      desiredTime.hour,
+      desiredTime.minute,
+      desiredTime.second,
+    )
+    const zonedMs = Date.UTC(
+      zoned.year,
+      Math.max(0, zoned.month - 1),
+      zoned.day,
+      zoned.hour,
+      zoned.minute,
+      zoned.second,
+    )
+    guessMs += desiredMs - zonedMs
+  }
+
+  return new Date(guessMs).toISOString()
+}
+
+function formatDateKeyInTimeZone(value: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(value)
+}
+
+function addDaysToDateKey(dateKey: string, delta: number): string {
+  const base = new Date(`${dateKey}T12:00:00.000Z`)
+  base.setUTCDate(base.getUTCDate() + delta)
+  return base.toISOString().slice(0, 10)
+}
+
+function buildSessionKey(employeeId: string, checkInAtIso: string, siteId: string) {
+  return `${employeeId}|${siteId}|${checkInAtIso}`
+}
+
+function rangesOverlap(
+  startA: number,
+  endA: number,
+  startB: number,
+  endB: number,
+) {
+  return startA < endB && startB < endA
 }
 
 function applyHeaderStyle(row: ExcelJS.Row) {
@@ -198,49 +440,45 @@ function applyDataStyle(row: ExcelJS.Row, zebra: boolean) {
   })
 }
 
-function sanitizeSheetName(base: string, used: Set<string>): string {
-  const clean = base.replace(/[\\/*?:[\]]/g, " ").replace(/\s+/g, " ").trim() || "Empleado"
-  let candidate = clean.slice(0, 31)
-  let index = 2
-  while (used.has(candidate)) {
-    const suffix = ` (${index})`
-    candidate = `${clean.slice(0, Math.max(1, 31 - suffix.length))}${suffix}`
-    index += 1
-  }
-  used.add(candidate)
-  return candidate
+function applyTotalsStyle(row: ExcelJS.Row) {
+  row.eachCell((cell: any) => {
+    cell.font = { size: 9, bold: true }
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true }
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "E6E1EA" } }
+    cell.border = {
+      top: { style: "thin" },
+      left: { style: "thin" },
+      bottom: { style: "thin" },
+      right: { style: "thin" },
+    }
+  })
 }
 
-function buildShiftRecords(
+function buildAttendanceSessions(
   attendanceRows: AttendanceRow[],
   breakRows: BreakRow[],
   eventRows: ShiftEventRow[],
   rangeEndIso: string,
   timeZone: string,
-): ShiftRecord[] {
+): AttendanceSession[] {
   const nowMs = Date.now()
   const rangeEndMs = Math.min(new Date(rangeEndIso).getTime(), nowMs)
+  const breaksByEmployeeSite = new Map<string, Array<{ startMs: number; endMs: number }>>()
 
-  const breaksByEmployee = new Map<string, Array<{ startMs: number; endMs: number }>>()
   for (const row of breakRows) {
     const startMs = new Date(row.started_at).getTime()
     const endMsRaw = row.ended_at ? new Date(row.ended_at).getTime() : rangeEndMs
     const endMs = Math.min(endMsRaw, rangeEndMs)
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) continue
-    const list = breaksByEmployee.get(row.employee_id) ?? []
+    const key = `${row.employee_id}|${row.site_id}`
+    const list = breaksByEmployeeSite.get(key) ?? []
     list.push({ startMs, endMs })
-    breaksByEmployee.set(row.employee_id, list)
+    breaksByEmployeeSite.set(key, list)
   }
 
-  const departureByShift = new Map<string, ShiftEventRow>()
-  for (const row of eventRows) {
-    if (row.event_type !== SHIFT_LEAVE_EVENT_TYPE) continue
-    const key = buildShiftKey(row.employee_id, row.shift_start_at)
-    const prev = departureByShift.get(key)
-    if (!prev || new Date(row.occurred_at).getTime() < new Date(prev.occurred_at).getTime()) {
-      departureByShift.set(key, row)
-    }
-  }
+  const departureEvents = eventRows
+    .filter((row) => row.event_type === SHIFT_LEAVE_EVENT_TYPE)
+    .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))
 
   const logsByEmployee = new Map<string, AttendanceRow[]>()
   for (const row of attendanceRows) {
@@ -249,30 +487,28 @@ function buildShiftRecords(
     logsByEmployee.set(row.employee_id, list)
   }
 
-  const records: ShiftRecord[] = []
+  const sessions: AttendanceSession[] = []
 
   for (const [employeeId, rows] of logsByEmployee.entries()) {
-    const ordered = [...rows].sort((a, b) =>
-      a.occurred_at < b.occurred_at ? -1 : a.occurred_at > b.occurred_at ? 1 : 0,
-    )
-    const employeeBreaks = breaksByEmployee.get(employeeId) ?? []
-
+    const ordered = [...rows].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at))
     let pendingCheckIn: AttendanceRow | null = null
 
-    const closeShift = (
+    const closeSession = (
       checkInRow: AttendanceRow,
-      shiftEndAtIso: string,
-      status: "Cerrado" | "Abierto",
-      shiftEndSource: string | null,
-      shiftEndNotes: string | null,
+      checkOutRow: AttendanceRow | null,
       extraObservation: string | null,
+      effectiveEndAtIso: string,
+      status: "Cerrado" | "Abierto",
     ) => {
       const startMs = new Date(checkInRow.occurred_at).getTime()
-      const endMs = new Date(shiftEndAtIso).getTime()
+      const endMs = new Date(effectiveEndAtIso).getTime()
       if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return
 
+      const siteKey = `${employeeId}|${checkInRow.site_id}`
+      const employeeBreaks = breaksByEmployeeSite.get(siteKey) ?? []
       const overlapRanges: Array<{ startMs: number; endMs: number }> = []
       let breakMinutesRaw = 0
+
       for (const item of employeeBreaks) {
         const overlapStart = Math.max(startMs, item.startMs)
         const overlapEnd = Math.min(endMs, item.endMs)
@@ -282,14 +518,13 @@ function buildShiftRecords(
         }
       }
 
+      const employeeInfo = unwrapRelation(checkInRow.employees)
+      const siteInfo = unwrapRelation(checkInRow.sites)
+      const shiftId = checkOutRow?.shift_id ?? checkInRow.shift_id ?? null
       const grossMinutesRaw = (endMs - startMs) / 60000
       const grossMinutes = safeMinutes(grossMinutesRaw)
       const breakMinutes = safeMinutes(breakMinutesRaw)
       const netMinutes = safeMinutes(grossMinutesRaw - breakMinutesRaw)
-
-      const employeeInfo = unwrapRelation(checkInRow.employees)
-      const siteInfo = unwrapRelation(checkInRow.sites)
-
       const breakRangesLabel =
         overlapRanges.length === 0
           ? "-"
@@ -300,29 +535,40 @@ function buildShiftRecords(
               )
               .join(" | ")
 
-      const departure = departureByShift.get(buildShiftKey(employeeId, checkInRow.occurred_at)) ?? null
-      const departureAt = departure?.occurred_at ?? null
-      const departureDistanceMeters = departure?.distance_meters ?? null
-      const notes = (shiftEndNotes ?? "").toLowerCase()
-      const source = (shiftEndSource ?? "").toLowerCase()
+      const departure =
+        departureEvents.find((row) => {
+          const eventMs = new Date(row.occurred_at).getTime()
+          return (
+            row.employee_id === employeeId &&
+            row.site_id === checkInRow.site_id &&
+            eventMs >= startMs &&
+            eventMs <= endMs
+          )
+        }) ?? null
+
+      const notes = (checkOutRow?.notes ?? "").toLowerCase()
+      const source = (checkOutRow?.source ?? "").toLowerCase()
       const isAutoClose =
         status === "Cerrado" &&
         (
           source === "system" ||
           notes.includes("cierre automatic") ||
           notes.includes("cierre automático") ||
+          notes.includes("auto check-out") ||
+          notes.includes("auto check-out") ||
           notes.includes("auto_close")
         )
-      const autoCloseAt = isAutoClose ? shiftEndAtIso : null
 
       const observations: string[] = []
-      if (departureAt) {
+      if (departure?.occurred_at) {
         const distanceLabel =
-          departureDistanceMeters != null ? ` (${Math.round(departureDistanceMeters)}m)` : ""
-        observations.push(`Salida de sede detectada ${formatDateTime(departureAt, timeZone)}${distanceLabel}`)
+          departure.distance_meters != null ? ` (${Math.round(departure.distance_meters)}m)` : ""
+        observations.push(
+          `Salida de sede detectada ${formatDateTime(departure.occurred_at, timeZone)}${distanceLabel}`,
+        )
       }
-      if (isAutoClose) {
-        observations.push(`Cierre automático ${formatTime(shiftEndAtIso, timeZone)}`)
+      if (isAutoClose && checkOutRow?.occurred_at) {
+        observations.push(`Cierre automático ${formatTime(checkOutRow.occurred_at, timeZone)}`)
       }
       if (status === "Abierto") {
         observations.push("Turno abierto")
@@ -331,82 +577,229 @@ function buildShiftRecords(
         observations.push(extraObservation)
       }
 
-      records.push({
+      sessions.push({
+        key: buildSessionKey(employeeId, checkInRow.occurred_at, checkInRow.site_id),
         employeeId,
         employeeName: employeeInfo?.full_name ?? employeeId,
         alias: employeeInfo?.alias ?? "",
         role: employeeInfo?.role ?? "",
+        siteId: checkInRow.site_id,
         siteName: siteInfo?.name ?? "",
-        shiftStartAt: checkInRow.occurred_at,
-        shiftEndAt: shiftEndAtIso,
+        shiftId,
+        checkInAt: checkInRow.occurred_at,
+        checkInSource: checkInRow.source ?? null,
+        checkOutAt: checkOutRow?.occurred_at ?? null,
+        checkOutSource: checkOutRow?.source ?? null,
+        checkOutNotes: checkOutRow?.notes ?? null,
+        effectiveEndAt: effectiveEndAtIso,
         status,
-        shiftEndSource,
-        shiftEndNotes,
         grossMinutes,
         breakMinutes,
         netMinutes,
         breakRangesLabel,
-        departureAt,
-        departureDistanceMeters,
+        departureAt: departure?.occurred_at ?? null,
+        departureDistanceMeters: departure?.distance_meters ?? null,
         isAutoClose,
-        autoCloseAt,
-        observations: observations.length > 0 ? observations.join(" | ") : "Sin novedades",
+        observations,
       })
     }
 
     for (const row of ordered) {
       if (row.action === "check_in") {
         if (pendingCheckIn) {
-          closeShift(
-            pendingCheckIn,
-            row.occurred_at,
-            "Cerrado",
-            null,
-            null,
-            "Nueva entrada sin salida previa",
-          )
+          closeSession(pendingCheckIn, null, "Nueva entrada sin salida previa", row.occurred_at, "Cerrado")
         }
         pendingCheckIn = row
         continue
       }
 
       if (row.action === "check_out" && pendingCheckIn) {
-        closeShift(
-          pendingCheckIn,
-          row.occurred_at,
-          "Cerrado",
-          row.source ?? null,
-          row.notes ?? null,
-          null,
-        )
+        closeSession(pendingCheckIn, row, null, row.occurred_at, "Cerrado")
         pendingCheckIn = null
       }
     }
 
     if (pendingCheckIn) {
-      closeShift(
+      closeSession(
         pendingCheckIn,
+        null,
+        null,
         new Date(rangeEndMs).toISOString(),
         "Abierto",
-        null,
-        null,
-        null,
       )
     }
   }
 
-  return records.sort((a, b) => {
-    if (a.employeeName !== b.employeeName) {
-      return a.employeeName.localeCompare(b.employeeName, "es")
-    }
-    return a.shiftStartAt < b.shiftStartAt ? -1 : a.shiftStartAt > b.shiftStartAt ? 1 : 0
+  return sessions.sort((a, b) => {
+    if (a.employeeName !== b.employeeName) return a.employeeName.localeCompare(b.employeeName, "es")
+    return a.checkInAt.localeCompare(b.checkInAt)
   })
 }
 
-function buildEmployeeSummary(shifts: ShiftRecord[]): EmployeeSummary[] {
-  const byEmployee = new Map<string, EmployeeSummary & { _siteSet: Set<string>; _daySet: Set<string> }>()
+function buildConsolidatedShiftRecords(
+  scheduledShifts: ScheduledShiftRow[],
+  sessions: AttendanceSession[],
+  lateGraceMinutes: number,
+  autoCloseGraceMinutes: number,
+  reportEndIso: string,
+  timeZone: string,
+) {
+  const sessionsByEmployee = new Map<string, AttendanceSession[]>()
+  for (const session of sessions) {
+    const list = sessionsByEmployee.get(session.employeeId) ?? []
+    list.push(session)
+    sessionsByEmployee.set(session.employeeId, list)
+  }
 
-  for (const row of shifts) {
+  const usedSessionKeys = new Set<string>()
+  const reportCutoffMs = Math.min(Date.now(), new Date(reportEndIso).getTime())
+
+  const rows = [...scheduledShifts]
+    .sort((a, b) => {
+      const employeeA = unwrapRelation(a.employees)?.full_name ?? a.employee_id
+      const employeeB = unwrapRelation(b.employees)?.full_name ?? b.employee_id
+      if (employeeA !== employeeB) return employeeA.localeCompare(employeeB, "es")
+      if (a.shift_date !== b.shift_date) return a.shift_date.localeCompare(b.shift_date)
+      return a.start_time.localeCompare(b.start_time)
+    })
+    .map((shift) => {
+      const employeeInfo = unwrapRelation(shift.employees)
+      const siteInfo = unwrapRelation(shift.sites)
+      const scheduledStartAt = zonedLocalToUtc(shift.shift_date, shift.start_time, timeZone)
+      const scheduledEndAt = zonedLocalToUtc(shift.shift_date, shift.end_time, timeZone)
+      const scheduledStartMs = new Date(scheduledStartAt).getTime()
+      const scheduledEndMs = new Date(scheduledEndAt).getTime()
+      const scheduledGrossMinutes = safeMinutes((scheduledEndMs - scheduledStartMs) / 60000)
+      const scheduledBreakMinutes = safeMinutes(shift.break_minutes ?? 0)
+      const scheduledNetMinutes = safeMinutes(scheduledGrossMinutes - scheduledBreakMinutes)
+      const employeeSessions = sessionsByEmployee.get(shift.employee_id) ?? []
+
+      let matched: AttendanceSession | null =
+        employeeSessions.find((session) => !usedSessionKeys.has(session.key) && session.shiftId === shift.id) ??
+        null
+      let matchedBy: "shift_id" | "window" | "none" = matched ? "shift_id" : "none"
+
+      if (!matched) {
+        const candidates = employeeSessions
+          .filter((session) => {
+            if (usedSessionKeys.has(session.key)) return false
+            if (session.siteId !== shift.site_id) return false
+            const sessionStartMs = new Date(session.checkInAt).getTime()
+            const sessionEndMs = new Date(session.effectiveEndAt).getTime()
+            return rangesOverlap(
+              sessionStartMs,
+              sessionEndMs,
+              scheduledStartMs - MATCH_WINDOW_BEFORE_MINUTES * 60000,
+              scheduledEndMs + MATCH_WINDOW_AFTER_MINUTES * 60000,
+            )
+          })
+          .sort((left, right) => {
+            const leftDiff = Math.abs(new Date(left.checkInAt).getTime() - scheduledStartMs)
+            const rightDiff = Math.abs(new Date(right.checkInAt).getTime() - scheduledStartMs)
+            if (leftDiff !== rightDiff) return leftDiff - rightDiff
+            return left.checkInAt.localeCompare(right.checkInAt)
+          })
+
+        matched = candidates[0] ?? null
+        matchedBy = matched ? "window" : "none"
+      }
+
+      if (matched) {
+        usedSessionKeys.add(matched.key)
+      }
+
+      const shiftEnded = scheduledEndMs <= reportCutoffMs
+      const checkInMs = matched ? new Date(matched.checkInAt).getTime() : null
+      const effectiveEndMs = matched ? new Date(matched.effectiveEndAt).getTime() : null
+      const lateMinutes = checkInMs != null ? safeMinutes((checkInMs - scheduledStartMs) / 60000) : 0
+      const isLate = checkInMs != null && checkInMs > scheduledStartMs + lateGraceMinutes * 60000
+      const overtimeMinutes =
+        effectiveEndMs != null ? safeMinutes((effectiveEndMs - scheduledEndMs) / 60000) : 0
+      const leftEarlyMinutes =
+        matched?.checkOutAt != null ? safeMinutes((scheduledEndMs - new Date(matched.checkOutAt).getTime()) / 60000) : 0
+      const isNoShow = !matched && shiftEnded
+      const isOpen = matched?.status === "Abierto"
+      const missingCloseCountable = !!matched && isOpen && shiftEnded
+      const attendanceStatus = isNoShow
+        ? "No asistió"
+        : !matched
+          ? "Pendiente"
+          : isOpen
+            ? "Abierto"
+            : "Asistió"
+      const closureStatus = !matched
+        ? "Sin registro"
+        : isOpen
+          ? "Pendiente"
+          : matched.isAutoClose
+            ? "Automático"
+            : "Manual"
+
+      const observations = [...(matched?.observations ?? [])]
+      if (isLate) {
+        observations.push(`Llegó tarde (${minutesToLabel(lateMinutes)})`)
+      }
+      if (isNoShow) {
+        observations.push("No se presentó al turno programado")
+      }
+      if (missingCloseCountable) {
+        observations.push("No cerró el turno")
+      }
+      if (matchedBy === "window") {
+        observations.push("Asistencia vinculada por ventana horaria")
+      }
+      if (shift.notes?.trim()) {
+        observations.push(`Nota del turno: ${shift.notes.trim()}`)
+      }
+
+      return {
+        shiftId: shift.id,
+        employeeId: shift.employee_id,
+        employeeName: employeeInfo?.full_name ?? shift.employee_id,
+        alias: employeeInfo?.alias ?? "",
+        role: employeeInfo?.role ?? "",
+        siteId: shift.site_id,
+        siteName: siteInfo?.name ?? "",
+        shiftDate: shift.shift_date,
+        scheduledStartAt,
+        scheduledEndAt,
+        scheduledBreakMinutes,
+        scheduledNetMinutes,
+        shiftStatus: shift.status,
+        publishedAt: shift.published_at,
+        checkInAt: matched?.checkInAt ?? null,
+        checkInSource: matched?.checkInSource ?? null,
+        checkOutAt: matched?.checkOutAt ?? null,
+        checkOutSource: matched?.checkOutSource ?? null,
+        checkOutNotes: matched?.checkOutNotes ?? null,
+        actualGrossMinutes: matched?.grossMinutes ?? 0,
+        actualBreakMinutes: matched?.breakMinutes ?? 0,
+        actualNetMinutes: matched?.netMinutes ?? 0,
+        breakRangesLabel: matched?.breakRangesLabel ?? "-",
+        attendanceStatus,
+        closureStatus,
+        lateMinutes,
+        leftEarlyMinutes,
+        overtimeMinutes,
+        isLate,
+        isNoShow,
+        isOpen: !!isOpen,
+        isAutoClose: matched?.isAutoClose ?? false,
+        hasDepartureEvent: !!matched?.departureAt,
+        departureAt: matched?.departureAt ?? null,
+        departureDistanceMeters: matched?.departureDistanceMeters ?? null,
+        matchedBy,
+        observations,
+      } satisfies ConsolidatedShiftRecord
+    })
+
+  return { rows, usedSessionKeys }
+}
+
+function buildEmployeeSummary(rows: ConsolidatedShiftRecord[]): EmployeeSummary[] {
+  const byEmployee = new Map<string, EmployeeSummary & { _siteSet: Set<string> }>()
+
+  for (const row of rows) {
     const current =
       byEmployee.get(row.employeeId) ??
       {
@@ -415,27 +808,34 @@ function buildEmployeeSummary(shifts: ShiftRecord[]): EmployeeSummary[] {
         alias: row.alias,
         role: row.role,
         sites: [],
-        shifts: 0,
-        workDays: 0,
-        grossMinutes: 0,
-        breakMinutes: 0,
-        netMinutes: 0,
-        departureCount: 0,
+        scheduledShifts: 0,
+        attendedShifts: 0,
+        lateCount: 0,
+        noShowCount: 0,
+        openCount: 0,
+        missingCloseCount: 0,
         autoCloseCount: 0,
-        openShiftCount: 0,
+        departureCount: 0,
+        scheduledMinutes: 0,
+        netMinutes: 0,
+        incidentCount: 0,
         _siteSet: new Set<string>(),
-        _daySet: new Set<string>(),
       }
 
-    current.shifts += 1
-    current.grossMinutes += row.grossMinutes
-    current.breakMinutes += row.breakMinutes
-    current.netMinutes += row.netMinutes
-    if (row.departureAt) current.departureCount += 1
+    current.scheduledShifts += 1
+    current.scheduledMinutes += row.scheduledNetMinutes
+    current.netMinutes += row.actualNetMinutes
+    if (row.checkInAt) current.attendedShifts += 1
+    if (row.isLate) current.lateCount += 1
+    if (row.isNoShow) current.noShowCount += 1
+    if (row.isOpen) current.openCount += 1
+    if (row.isOpen && row.attendanceStatus === "Abierto") current.missingCloseCount += 1
     if (row.isAutoClose) current.autoCloseCount += 1
-    if (row.status === "Abierto") current.openShiftCount += 1
+    if (row.hasDepartureEvent) current.departureCount += 1
     if (row.siteName) current._siteSet.add(row.siteName)
-    current._daySet.add(new Date(row.shiftStartAt).toISOString().slice(0, 10))
+    if (row.isLate || row.isNoShow || row.isOpen || row.isAutoClose || row.hasDepartureEvent) {
+      current.incidentCount += 1
+    }
 
     byEmployee.set(row.employeeId, current)
   }
@@ -447,16 +847,610 @@ function buildEmployeeSummary(shifts: ShiftRecord[]): EmployeeSummary[] {
       alias: item.alias,
       role: item.role,
       sites: [...item._siteSet.values()],
-      shifts: item.shifts,
-      workDays: item._daySet.size,
-      grossMinutes: safeMinutes(item.grossMinutes),
-      breakMinutes: safeMinutes(item.breakMinutes),
-      netMinutes: safeMinutes(item.netMinutes),
-      departureCount: item.departureCount,
+      scheduledShifts: item.scheduledShifts,
+      attendedShifts: item.attendedShifts,
+      lateCount: item.lateCount,
+      noShowCount: item.noShowCount,
+      openCount: item.openCount,
+      missingCloseCount: item.missingCloseCount,
       autoCloseCount: item.autoCloseCount,
-      openShiftCount: item.openShiftCount,
+      departureCount: item.departureCount,
+      scheduledMinutes: safeMinutes(item.scheduledMinutes),
+      netMinutes: safeMinutes(item.netMinutes),
+      incidentCount: item.incidentCount,
     }))
     .sort((a, b) => a.employeeName.localeCompare(b.employeeName, "es"))
+}
+
+function buildSiteSummary(rows: ConsolidatedShiftRecord[]): SiteSummary[] {
+  const bySite = new Map<string, SiteSummary>()
+  for (const row of rows) {
+    const current =
+      bySite.get(row.siteId) ??
+      {
+        siteId: row.siteId,
+        siteName: row.siteName || row.siteId,
+        scheduledShifts: 0,
+        attendedShifts: 0,
+        lateCount: 0,
+        noShowCount: 0,
+        openCount: 0,
+        missingCloseCount: 0,
+        autoCloseCount: 0,
+        departureCount: 0,
+        scheduledMinutes: 0,
+        netMinutes: 0,
+        incidentCount: 0,
+      }
+
+    current.scheduledShifts += 1
+    current.scheduledMinutes += row.scheduledNetMinutes
+    current.netMinutes += row.actualNetMinutes
+    if (row.checkInAt) current.attendedShifts += 1
+    if (row.isLate) current.lateCount += 1
+    if (row.isNoShow) current.noShowCount += 1
+    if (row.isOpen) current.openCount += 1
+    if (row.isOpen && row.attendanceStatus === "Abierto") current.missingCloseCount += 1
+    if (row.isAutoClose) current.autoCloseCount += 1
+    if (row.hasDepartureEvent) current.departureCount += 1
+    if (row.isLate || row.isNoShow || row.isOpen || row.isAutoClose || row.hasDepartureEvent) {
+      current.incidentCount += 1
+    }
+
+    bySite.set(row.siteId, current)
+  }
+
+  return [...bySite.values()].sort((a, b) => a.siteName.localeCompare(b.siteName, "es"))
+}
+
+function buildReportSummary(rows: ConsolidatedShiftRecord[]): ReportSummary {
+  const scheduledShifts = rows.length
+  const attendedShifts = rows.filter((row) => !!row.checkInAt).length
+  const lateCount = rows.filter((row) => row.isLate).length
+  const noShowCount = rows.filter((row) => row.isNoShow).length
+  const openCount = rows.filter((row) => row.isOpen).length
+  const missingCloseCount = rows.filter((row) => row.isOpen && row.attendanceStatus === "Abierto").length
+  const autoCloseCount = rows.filter((row) => row.isAutoClose).length
+  const departureCount = rows.filter((row) => row.hasDepartureEvent).length
+  const scheduledMinutes = rows.reduce((sum, row) => sum + row.scheduledNetMinutes, 0)
+  const netMinutes = rows.reduce((sum, row) => sum + row.actualNetMinutes, 0)
+  const attendanceRate = scheduledShifts > 0 ? attendedShifts / scheduledShifts : 0
+  const punctualityRate = attendedShifts > 0 ? (attendedShifts - lateCount) / attendedShifts : 0
+
+  return {
+    scheduledShifts,
+    attendedShifts,
+    lateCount,
+    noShowCount,
+    openCount,
+    missingCloseCount,
+    autoCloseCount,
+    departureCount,
+    scheduledMinutes: safeMinutes(scheduledMinutes),
+    netMinutes: safeMinutes(netMinutes),
+    attendanceRate,
+    punctualityRate,
+  }
+}
+
+function buildIncidentRows(
+  rows: ConsolidatedShiftRecord[],
+  sessions: AttendanceSession[],
+  usedSessionKeys: Set<string>,
+  timeZone: string,
+): IncidentRow[] {
+  const incidents: IncidentRow[] = []
+
+  for (const row of rows) {
+    const scheduledRange = `${formatTime(row.scheduledStartAt, timeZone)}-${formatTime(row.scheduledEndAt, timeZone)}`
+    const actualRange = row.checkInAt
+      ? `${formatTime(row.checkInAt, timeZone)}-${row.checkOutAt ? formatTime(row.checkOutAt, timeZone) : "Abierto"}`
+      : "-"
+
+    if (row.isLate) {
+      incidents.push({
+        category: "Tardanza",
+        shiftDate: row.shiftDate,
+        siteName: row.siteName,
+        employeeName: row.employeeName,
+        scheduledRange,
+        actualRange,
+        status: row.attendanceStatus,
+        detail: `Ingreso tardío por ${minutesToLabel(row.lateMinutes)}.`,
+      })
+    }
+    if (row.isNoShow) {
+      incidents.push({
+        category: "No show",
+        shiftDate: row.shiftDate,
+        siteName: row.siteName,
+        employeeName: row.employeeName,
+        scheduledRange,
+        actualRange,
+        status: row.attendanceStatus,
+        detail: "No se registró check-in para el turno publicado.",
+      })
+    }
+    if (row.isOpen) {
+      incidents.push({
+        category: "Sin cierre",
+        shiftDate: row.shiftDate,
+        siteName: row.siteName,
+        employeeName: row.employeeName,
+        scheduledRange,
+        actualRange,
+        status: row.closureStatus,
+        detail: "El turno sigue abierto y no tiene check-out registrado.",
+      })
+    }
+    if (row.isAutoClose) {
+      incidents.push({
+        category: "Autocierre",
+        shiftDate: row.shiftDate,
+        siteName: row.siteName,
+        employeeName: row.employeeName,
+        scheduledRange,
+        actualRange,
+        status: row.closureStatus,
+        detail: "La salida fue registrada automáticamente por el sistema.",
+      })
+    }
+    if (row.hasDepartureEvent) {
+      const distanceLabel =
+        row.departureDistanceMeters != null ? ` Distancia: ${Math.round(row.departureDistanceMeters)}m.` : ""
+      incidents.push({
+        category: "Salida de sede",
+        shiftDate: row.shiftDate,
+        siteName: row.siteName,
+        employeeName: row.employeeName,
+        scheduledRange,
+        actualRange,
+        status: row.closureStatus,
+        detail: `Se detectó salida de sede durante el turno.${distanceLabel}`,
+      })
+    }
+    if (row.matchedBy === "window") {
+      incidents.push({
+        category: "Vinculación manual",
+        shiftDate: row.shiftDate,
+        siteName: row.siteName,
+        employeeName: row.employeeName,
+        scheduledRange,
+        actualRange,
+        status: row.attendanceStatus,
+        detail: "La asistencia se vinculó por ventana horaria y no por shift_id.",
+      })
+    }
+  }
+
+  for (const session of sessions) {
+    if (usedSessionKeys.has(session.key)) continue
+    incidents.push({
+      category: "Asistencia sin turno",
+      shiftDate: session.checkInAt.slice(0, 10),
+      siteName: session.siteName,
+      employeeName: session.employeeName,
+      scheduledRange: "-",
+      actualRange: `${formatTime(session.checkInAt, timeZone)}-${session.checkOutAt ? formatTime(session.checkOutAt, timeZone) : "Abierto"}`,
+      status: session.status,
+      detail: "Existe asistencia registrada que no pudo vincularse a un turno publicado del rango.",
+    })
+  }
+
+  return incidents.sort((a, b) => {
+    if (a.shiftDate !== b.shiftDate) return a.shiftDate.localeCompare(b.shiftDate)
+    if (a.siteName !== b.siteName) return a.siteName.localeCompare(b.siteName, "es")
+    return a.employeeName.localeCompare(b.employeeName, "es")
+  })
+}
+
+function buildWorkbook(
+  rows: ConsolidatedShiftRecord[],
+  employeeSummaryRows: EmployeeSummary[],
+  siteSummaryRows: SiteSummary[],
+  incidentRows: IncidentRow[],
+  summary: ReportSummary,
+  start: Date,
+  end: Date,
+  timeZone: string,
+  scopeLabel: string,
+) {
+  const workbook = new ExcelJS.Workbook()
+  workbook.creator = "ANIMA"
+  workbook.lastModifiedBy = "ANIMA"
+  workbook.created = new Date()
+  workbook.modified = new Date()
+
+  const summarySheet = workbook.addWorksheet("Resumen ejecutivo")
+  summarySheet.properties.defaultRowHeight = 18
+  summarySheet.columns = [
+    { width: 24 },
+    { width: 16 },
+    { width: 6 },
+    { width: 28 },
+    { width: 16 },
+    { width: 14 },
+    { width: 14 },
+    { width: 14 },
+    { width: 14 },
+    { width: 14 },
+    { width: 14 },
+    { width: 14 },
+    { width: 16 },
+    { width: 16 },
+  ]
+
+  summarySheet.mergeCells("A1:N1")
+  summarySheet.getCell("A1").value = "REPORTE OPERATIVO DE TURNOS Y ASISTENCIA"
+  summarySheet.getCell("A1").font = { size: 12, bold: true }
+  summarySheet.getCell("A1").alignment = { vertical: "middle", horizontal: "center" }
+  summarySheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "D9E8F6" } }
+
+  summarySheet.mergeCells("A2:N2")
+  summarySheet.getCell("A2").value = `Periodo: ${formatDate(start, timeZone)} a ${formatDate(end, timeZone)} | Alcance: ${scopeLabel} | Generado: ${formatDate(new Date(), timeZone)}`
+  summarySheet.getCell("A2").font = { size: 9, italic: true }
+  summarySheet.getCell("A2").alignment = { vertical: "middle", horizontal: "left" }
+
+  const metricHeaderRow = 4
+  summarySheet.getRow(metricHeaderRow).values = ["Métrica", "Valor"]
+  applyHeaderStyle(summarySheet.getRow(metricHeaderRow))
+
+  const metrics: Array<[string, string | number]> = [
+    ["Turnos programados", summary.scheduledShifts],
+    ["Turnos asistidos", summary.attendedShifts],
+    ["Tardanzas", summary.lateCount],
+    ["No show", summary.noShowCount],
+    ["Turnos abiertos", summary.openCount],
+    ["Cierres faltantes", summary.missingCloseCount],
+    ["Cierres automáticos", summary.autoCloseCount],
+    ["Salidas de sede", summary.departureCount],
+    ["Horas programadas", minutesToClock(summary.scheduledMinutes)],
+    ["Horas netas reales", minutesToClock(summary.netMinutes)],
+    ["Asistencia", `${Math.round(summary.attendanceRate * 100)}%`],
+    ["Puntualidad", `${Math.round(summary.punctualityRate * 100)}%`],
+  ]
+
+  let metricRow = metricHeaderRow + 1
+  for (const [index, metric] of metrics.entries()) {
+    summarySheet.getRow(metricRow).values = [metric[0], metric[1]]
+    applyDataStyle(summarySheet.getRow(metricRow), index % 2 === 1)
+    metricRow += 1
+  }
+
+  metricRow += 2
+  summarySheet.mergeCells(`A${metricRow}:N${metricRow}`)
+  summarySheet.getCell(`A${metricRow}`).value = "RESUMEN POR TRABAJADOR"
+  summarySheet.getCell(`A${metricRow}`).font = { size: 10, bold: true }
+  summarySheet.getCell(`A${metricRow}`).fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "F1ECF5" },
+  }
+  metricRow += 1
+
+  summarySheet.getRow(metricRow).values = [
+    "No.",
+    "Empleado",
+    "Alias",
+    "Rol",
+    "Sede(s)",
+    "Programados",
+    "Asistidos",
+    "Tardanzas",
+    "No show",
+    "Abiertos",
+    "Autocierres",
+    "Salidas sede",
+    "Horas prog.",
+    "Horas netas",
+  ]
+  applyHeaderStyle(summarySheet.getRow(metricRow))
+
+  let employeeRow = metricRow + 1
+  for (const [index, row] of employeeSummaryRows.entries()) {
+    summarySheet.getRow(employeeRow).values = [
+      index + 1,
+      row.employeeName,
+      row.alias,
+      row.role,
+      row.sites.join(" | "),
+      row.scheduledShifts,
+      row.attendedShifts,
+      row.lateCount,
+      row.noShowCount,
+      row.openCount,
+      row.autoCloseCount,
+      row.departureCount,
+      minutesToClock(row.scheduledMinutes),
+      minutesToClock(row.netMinutes),
+    ]
+    applyDataStyle(summarySheet.getRow(employeeRow), index % 2 === 1)
+    employeeRow += 1
+  }
+
+  if (employeeSummaryRows.length === 0) {
+    summarySheet.mergeCells(`A${employeeRow}:N${employeeRow}`)
+    summarySheet.getCell(`A${employeeRow}`).value = "Sin turnos programados para el rango seleccionado."
+    summarySheet.getCell(`A${employeeRow}`).font = { size: 9, italic: true }
+    summarySheet.getCell(`A${employeeRow}`).alignment = { vertical: "middle", horizontal: "center" }
+    employeeRow += 1
+  }
+
+  employeeRow += 2
+  summarySheet.mergeCells(`A${employeeRow}:J${employeeRow}`)
+  summarySheet.getCell(`A${employeeRow}`).value = "RESUMEN POR SEDE"
+  summarySheet.getCell(`A${employeeRow}`).font = { size: 10, bold: true }
+  summarySheet.getCell(`A${employeeRow}`).fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "F1ECF5" },
+  }
+  employeeRow += 1
+
+  summarySheet.getRow(employeeRow).values = [
+    "No.",
+    "Sede",
+    "Programados",
+    "Asistidos",
+    "Tardanzas",
+    "No show",
+    "Abiertos",
+    "Autocierres",
+    "Horas prog.",
+    "Horas netas",
+  ]
+  applyHeaderStyle(summarySheet.getRow(employeeRow))
+
+  let siteRow = employeeRow + 1
+  for (const [index, row] of siteSummaryRows.entries()) {
+    summarySheet.getRow(siteRow).values = [
+      index + 1,
+      row.siteName,
+      row.scheduledShifts,
+      row.attendedShifts,
+      row.lateCount,
+      row.noShowCount,
+      row.openCount,
+      row.autoCloseCount,
+      minutesToClock(row.scheduledMinutes),
+      minutesToClock(row.netMinutes),
+    ]
+    applyDataStyle(summarySheet.getRow(siteRow), index % 2 === 1)
+    siteRow += 1
+  }
+
+  const detailSheet = workbook.addWorksheet("Detalle por turno")
+  detailSheet.properties.defaultRowHeight = 18
+  detailSheet.columns = [
+    { width: 6 },
+    { width: 14 },
+    { width: 22 },
+    { width: 28 },
+    { width: 16 },
+    { width: 16 },
+    { width: 16 },
+    { width: 16 },
+    { width: 16 },
+    { width: 16 },
+    { width: 12 },
+    { width: 12 },
+    { width: 12 },
+    { width: 16 },
+    { width: 16 },
+    { width: 14 },
+    { width: 14 },
+    { width: 14 },
+    { width: 16 },
+    { width: 18 },
+    { width: 18 },
+    { width: 40 },
+  ]
+
+  detailSheet.mergeCells("A1:V1")
+  detailSheet.getCell("A1").value = "DETALLE OPERATIVO POR TURNO"
+  detailSheet.getCell("A1").font = { size: 11, bold: true }
+  detailSheet.getCell("A1").alignment = { vertical: "middle", horizontal: "center" }
+  detailSheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "D9E8F6" } }
+
+  detailSheet.mergeCells("A2:V2")
+  detailSheet.getCell("A2").value = `Periodo: ${formatDate(start, timeZone)} a ${formatDate(end, timeZone)} | Alcance: ${scopeLabel}`
+  detailSheet.getCell("A2").font = { size: 9, italic: true }
+  detailSheet.getCell("A2").alignment = { vertical: "middle", horizontal: "left" }
+
+  const detailHeaderRow = 4
+  detailSheet.getRow(detailHeaderRow).values = [
+    "No.",
+    "Fecha",
+    "Sede",
+    "Trabajador",
+    "Programado",
+    "Entrada real",
+    "Salida real",
+    "Estado asistencia",
+    "Estado cierre",
+    "Descansos",
+    "Min prog.",
+    "Min netos",
+    "Tardanza",
+    "Salida anticipada",
+    "Tiempo extra",
+    "Autocierre",
+    "Salida sede",
+    "Vinculación",
+    "Fuente check-in",
+    "Fuente cierre",
+    "Estado turno",
+    "Observaciones",
+  ]
+  applyHeaderStyle(detailSheet.getRow(detailHeaderRow))
+  detailSheet.views = [{ state: "frozen", ySplit: detailHeaderRow }]
+
+  let detailRow = detailHeaderRow + 1
+  for (const [index, row] of rows.entries()) {
+    detailSheet.getRow(detailRow).values = [
+      index + 1,
+      row.shiftDate,
+      row.siteName,
+      row.employeeName,
+      `${formatTime(row.scheduledStartAt, timeZone)}-${formatTime(row.scheduledEndAt, timeZone)}`,
+      row.checkInAt ? formatDateTime(row.checkInAt, timeZone) : "-",
+      row.checkOutAt ? formatDateTime(row.checkOutAt, timeZone) : row.isOpen ? "Abierto" : "-",
+      row.attendanceStatus,
+      row.closureStatus,
+      row.breakRangesLabel,
+      row.scheduledNetMinutes,
+      row.actualNetMinutes,
+      row.isLate ? minutesToLabel(row.lateMinutes) : "-",
+      row.leftEarlyMinutes > 0 ? minutesToLabel(row.leftEarlyMinutes) : "-",
+      row.overtimeMinutes > 0 ? minutesToLabel(row.overtimeMinutes) : "-",
+      row.isAutoClose ? "Sí" : "No",
+      row.hasDepartureEvent ? "Sí" : "No",
+      row.matchedBy,
+      row.checkInSource ?? "-",
+      row.checkOutSource ?? "-",
+      row.shiftStatus,
+      row.observations.join(" | ") || "Sin novedades",
+    ]
+    applyDataStyle(detailSheet.getRow(detailRow), index % 2 === 1)
+    detailRow += 1
+  }
+
+  if (rows.length === 0) {
+    detailSheet.mergeCells(`A${detailRow}:V${detailRow}`)
+    detailSheet.getCell(`A${detailRow}`).value = "Sin turnos para el rango seleccionado."
+    detailSheet.getCell(`A${detailRow}`).font = { size: 9, italic: true }
+    detailSheet.getCell(`A${detailRow}`).alignment = { vertical: "middle", horizontal: "center" }
+  }
+
+  const incidentsSheet = workbook.addWorksheet("Incidencias")
+  incidentsSheet.properties.defaultRowHeight = 18
+  incidentsSheet.columns = [
+    { width: 18 },
+    { width: 14 },
+    { width: 22 },
+    { width: 28 },
+    { width: 16 },
+    { width: 16 },
+    { width: 18 },
+    { width: 42 },
+  ]
+  incidentsSheet.mergeCells("A1:H1")
+  incidentsSheet.getCell("A1").value = "INCIDENCIAS OPERATIVAS"
+  incidentsSheet.getCell("A1").font = { size: 11, bold: true }
+  incidentsSheet.getCell("A1").alignment = { vertical: "middle", horizontal: "center" }
+  incidentsSheet.getCell("A1").fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "D9E8F6" },
+  }
+  incidentsSheet.getRow(4).values = [
+    "Categoría",
+    "Fecha",
+    "Sede",
+    "Trabajador",
+    "Horario",
+    "Registro",
+    "Estado",
+    "Detalle",
+  ]
+  applyHeaderStyle(incidentsSheet.getRow(4))
+
+  let incidentsDataRow = 5
+  for (const [index, row] of incidentRows.entries()) {
+    incidentsSheet.getRow(incidentsDataRow).values = [
+      row.category,
+      row.shiftDate,
+      row.siteName,
+      row.employeeName,
+      row.scheduledRange,
+      row.actualRange,
+      row.status,
+      row.detail,
+    ]
+    applyDataStyle(incidentsSheet.getRow(incidentsDataRow), index % 2 === 1)
+    incidentsDataRow += 1
+  }
+
+  if (incidentRows.length === 0) {
+    incidentsSheet.mergeCells("A5:H5")
+    incidentsSheet.getCell("A5").value = "Sin incidencias operativas en el rango seleccionado."
+    incidentsSheet.getCell("A5").font = { size: 9, italic: true }
+    incidentsSheet.getCell("A5").alignment = { vertical: "middle", horizontal: "center" }
+  }
+
+  const usedNames = new Set<string>(["Resumen ejecutivo", "Detalle por turno", "Incidencias"])
+  const rowsByEmployee = new Map<string, ConsolidatedShiftRecord[]>()
+  for (const row of rows) {
+    const list = rowsByEmployee.get(row.employeeId) ?? []
+    list.push(row)
+    rowsByEmployee.set(row.employeeId, list)
+  }
+
+  for (const person of employeeSummaryRows) {
+    const personRows = rowsByEmployee.get(person.employeeId) ?? []
+    const sheetName = sanitizeSheetName(person.employeeName || person.employeeId, usedNames)
+    const sheet = workbook.addWorksheet(sheetName)
+    sheet.properties.defaultRowHeight = 18
+    sheet.columns = [
+      { width: 12 },
+      { width: 22 },
+      { width: 18 },
+      { width: 18 },
+      { width: 18 },
+      { width: 14 },
+      { width: 14 },
+      { width: 14 },
+      { width: 14 },
+      { width: 36 },
+    ]
+
+    sheet.mergeCells("A1:J1")
+    sheet.getCell("A1").value = `DETALLE INDIVIDUAL | ${person.employeeName}`
+    sheet.getCell("A1").font = { size: 11, bold: true }
+    sheet.getCell("A1").alignment = { vertical: "middle", horizontal: "center" }
+    sheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "D9E8F6" } }
+
+    sheet.getRow(4).values = [
+      "Fecha",
+      "Sede",
+      "Programado",
+      "Entrada",
+      "Salida",
+      "Asistencia",
+      "Cierre",
+      "Tardanza",
+      "Min netos",
+      "Observaciones",
+    ]
+    applyHeaderStyle(sheet.getRow(4))
+
+    let rowNumber = 5
+    for (const [index, row] of personRows.entries()) {
+      sheet.getRow(rowNumber).values = [
+        row.shiftDate,
+        row.siteName,
+        `${formatTime(row.scheduledStartAt, timeZone)}-${formatTime(row.scheduledEndAt, timeZone)}`,
+        row.checkInAt ? formatDateTime(row.checkInAt, timeZone) : "-",
+        row.checkOutAt ? formatDateTime(row.checkOutAt, timeZone) : row.isOpen ? "Abierto" : "-",
+        row.attendanceStatus,
+        row.closureStatus,
+        row.isLate ? minutesToLabel(row.lateMinutes) : "-",
+        row.actualNetMinutes,
+        row.observations.join(" | ") || "Sin novedades",
+      ]
+      applyDataStyle(sheet.getRow(rowNumber), index % 2 === 1)
+      rowNumber += 1
+    }
+
+    if (personRows.length === 0) {
+      sheet.mergeCells("A5:J5")
+      sheet.getCell("A5").value = "Sin registros para este trabajador."
+      sheet.getCell("A5").font = { size: 9, italic: true }
+      sheet.getCell("A5").alignment = { vertical: "middle", horizontal: "center" }
+    }
+  }
+
+  return workbook
 }
 
 serve(async (req: Request) => {
@@ -515,6 +1509,7 @@ serve(async (req: Request) => {
     const endParam = url.searchParams.get("end")
     const requestedEmployeeId = url.searchParams.get("employee_id")?.trim() || null
     const requestedSiteId = url.searchParams.get("site_id")?.trim() || null
+    const responseFormat = (url.searchParams.get("format") ?? "xlsx").trim().toLowerCase()
     const reportTimeZone = normalizeTimeZone(url.searchParams.get("tz"))
 
     const end = endParam ? new Date(endParam) : new Date()
@@ -652,46 +1647,86 @@ serve(async (req: Request) => {
       }
     }
 
-    let attendanceQuery = supabase
-      .from("attendance_logs")
-      .select(
-        "employee_id, site_id, action, source, notes, occurred_at, employees(full_name, alias, role), sites(name)",
-      )
-      .gte("occurred_at", startIso)
-      .lte("occurred_at", endIso)
-      .order("occurred_at", { ascending: true })
-
-    let breaksQuery = supabase
-      .from("attendance_breaks")
-      .select("employee_id, site_id, started_at, ended_at")
-      .lte("started_at", endIso)
-      .or(`ended_at.is.null,ended_at.gte.${startIso}`)
-      .order("started_at", { ascending: true })
-
-    let eventsQuery = supabase
-      .from("attendance_shift_events")
-      .select("employee_id, site_id, shift_start_at, event_type, occurred_at, distance_meters, notes")
-      .gte("occurred_at", startIso)
-      .lte("occurred_at", endIso)
-      .order("occurred_at", { ascending: true })
-
-    if (scopeSiteId) {
-      attendanceQuery = attendanceQuery.eq("site_id", scopeSiteId)
-      breaksQuery = breaksQuery.eq("site_id", scopeSiteId)
-      eventsQuery = eventsQuery.eq("site_id", scopeSiteId)
-    }
-    if (scopeEmployeeId) {
-      attendanceQuery = attendanceQuery.eq("employee_id", scopeEmployeeId)
-      breaksQuery = breaksQuery.eq("employee_id", scopeEmployeeId)
-      eventsQuery = eventsQuery.eq("employee_id", scopeEmployeeId)
-    }
+    const queryStart = new Date(start.getTime() - QUERY_BUFFER_HOURS * 3600000)
+    const queryEnd = new Date(end.getTime() + QUERY_BUFFER_HOURS * 3600000)
+    const shiftStartDate = formatDateKeyInTimeZone(start, reportTimeZone)
+    const shiftEndDate = formatDateKeyInTimeZone(end, reportTimeZone)
 
     const [
+      { data: policyData, error: policyError },
       { data: attendanceData, error: attendanceError },
       { data: breakData, error: breakError },
       { data: eventData, error: eventError },
-    ] = await Promise.all([attendanceQuery, breaksQuery, eventsQuery])
+      { data: shiftData, error: shiftError },
+    ] = await Promise.all([
+      supabase
+        .from("shift_policy")
+        .select("late_grace_minutes, auto_checkout_grace_minutes_after_end")
+        .limit(1)
+        .maybeSingle<ShiftPolicyRow>(),
+      (() => {
+        let query = supabase
+          .from("attendance_logs")
+          .select(
+            "employee_id, site_id, action, source, notes, occurred_at, shift_id, employees(full_name, alias, role), sites(name)",
+          )
+          .gte("occurred_at", queryStart.toISOString())
+          .lte("occurred_at", queryEnd.toISOString())
+          .order("occurred_at", { ascending: true })
 
+        if (scopeSiteId) query = query.eq("site_id", scopeSiteId)
+        if (scopeEmployeeId) query = query.eq("employee_id", scopeEmployeeId)
+        return query
+      })(),
+      (() => {
+        let query = supabase
+          .from("attendance_breaks")
+          .select("employee_id, site_id, started_at, ended_at")
+          .lte("started_at", queryEnd.toISOString())
+          .or(`ended_at.is.null,ended_at.gte.${queryStart.toISOString()}`)
+          .order("started_at", { ascending: true })
+
+        if (scopeSiteId) query = query.eq("site_id", scopeSiteId)
+        if (scopeEmployeeId) query = query.eq("employee_id", scopeEmployeeId)
+        return query
+      })(),
+      (() => {
+        let query = supabase
+          .from("attendance_shift_events")
+          .select("employee_id, site_id, shift_start_at, event_type, occurred_at, distance_meters, notes")
+          .gte("occurred_at", queryStart.toISOString())
+          .lte("occurred_at", queryEnd.toISOString())
+          .order("occurred_at", { ascending: true })
+
+        if (scopeSiteId) query = query.eq("site_id", scopeSiteId)
+        if (scopeEmployeeId) query = query.eq("employee_id", scopeEmployeeId)
+        return query
+      })(),
+      (() => {
+        let query = supabase
+          .from("employee_shifts")
+          .select(
+            "id, employee_id, site_id, shift_date, start_time, end_time, break_minutes, notes, status, published_at, employees!employee_shifts_employee_id_fkey(full_name, alias, role), sites!employee_shifts_site_id_fkey(name)",
+          )
+          .not("published_at", "is", null)
+          .neq("status", "cancelled")
+          .gte("shift_date", shiftStartDate)
+          .lte("shift_date", shiftEndDate)
+          .order("shift_date", { ascending: true })
+          .order("start_time", { ascending: true })
+
+        if (scopeSiteId) query = query.eq("site_id", scopeSiteId)
+        if (scopeEmployeeId) query = query.eq("employee_id", scopeEmployeeId)
+        return query
+      })(),
+    ])
+
+    if (policyError) {
+      return new Response(JSON.stringify({ error: "Shift policy query failed" }), {
+        status: 500,
+        headers: corsHeaders,
+      })
+    }
     if (attendanceError) {
       return new Response(JSON.stringify({ error: "Attendance query failed" }), {
         status: 500,
@@ -710,417 +1745,115 @@ serve(async (req: Request) => {
         headers: corsHeaders,
       })
     }
+    if (shiftError) {
+      return new Response(JSON.stringify({ error: "Shift schedule query failed" }), {
+        status: 500,
+        headers: corsHeaders,
+      })
+    }
+
+    const policy = policyData ?? null
+    const lateGraceMinutes = safeMinutes(policy?.late_grace_minutes ?? DEFAULT_LATE_GRACE_MINUTES)
+    const autoCloseGraceMinutes = safeMinutes(
+      policy?.auto_checkout_grace_minutes_after_end ?? DEFAULT_AUTO_CLOSE_GRACE_MINUTES,
+    )
 
     const attendanceRows = (attendanceData ?? []) as AttendanceRow[]
     const breakRows = (breakData ?? []) as BreakRow[]
     const eventRows = (eventData ?? []) as ShiftEventRow[]
+    const scheduledShifts = (shiftData ?? []) as ScheduledShiftRow[]
 
-    const shifts = buildShiftRecords(attendanceRows, breakRows, eventRows, endIso, reportTimeZone)
-    const summaryRows = buildEmployeeSummary(shifts)
-    const shiftsByEmployee = new Map<string, ShiftRecord[]>()
-    for (const row of shifts) {
-      const list = shiftsByEmployee.get(row.employeeId) ?? []
-      list.push(row)
-      shiftsByEmployee.set(row.employeeId, list)
-    }
+    const sessions = buildAttendanceSessions(attendanceRows, breakRows, eventRows, endIso, reportTimeZone)
+    const consolidated = buildConsolidatedShiftRecords(
+      scheduledShifts,
+      sessions,
+      lateGraceMinutes,
+      autoCloseGraceMinutes,
+      endIso,
+      reportTimeZone,
+    )
+    const rows = consolidated.rows
+    const employeeSummaryRows = buildEmployeeSummary(rows)
+    const siteSummaryRows = buildSiteSummary(rows)
+    const incidentRows = buildIncidentRows(rows, sessions, consolidated.usedSessionKeys, reportTimeZone)
+    const summary = buildReportSummary(rows)
 
-    const workbook = new ExcelJS.Workbook()
-    workbook.creator = "ANIMA"
-    workbook.lastModifiedBy = "ANIMA"
-    workbook.created = new Date()
-    workbook.modified = new Date()
-
-    const summarySheet = workbook.addWorksheet("Resumen gerencial")
-    summarySheet.properties.defaultRowHeight = 18
-
-    summarySheet.mergeCells("A1:N1")
-    summarySheet.getCell("A1").value = "PLANILLA GERENCIAL DE ASISTENCIA"
-    summarySheet.getCell("A1").font = { size: 12, bold: true }
-    summarySheet.getCell("A1").alignment = { vertical: "middle", horizontal: "center" }
-    summarySheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "D9E8F6" } }
-
-    summarySheet.mergeCells("A2:N2")
-    summarySheet.getCell("A2").value = `Periodo: ${formatDate(start, reportTimeZone)} a ${formatDate(end, reportTimeZone)} | Alcance: ${scopeLabel} | Generado: ${formatDate(new Date(), reportTimeZone)}`
-    summarySheet.getCell("A2").font = { size: 9, italic: true }
-    summarySheet.getCell("A2").alignment = { vertical: "middle", horizontal: "left" }
-
-    const summaryHeaderRow = 4
-    summarySheet.getRow(summaryHeaderRow).values = [
-      "No.",
-      "Empleado",
-      "Alias",
-      "Rol",
-      "Sede(s)",
-      "Turnos",
-      "Días trabajados",
-      "Minutos brutos",
-      "Minutos descanso",
-      "Minutos netos",
-      "Horas netas",
-      "Salidas de sede",
-      "Cierres automáticos",
-      "Turnos abiertos",
-    ]
-    applyHeaderStyle(summarySheet.getRow(summaryHeaderRow))
-    summarySheet.views = [{ state: "frozen", ySplit: summaryHeaderRow }]
-
-    let summaryDataRow = summaryHeaderRow + 1
-    let totalGross = 0
-    let totalBreak = 0
-    let totalNet = 0
-    let totalShifts = 0
-    let totalDepartures = 0
-    let totalAutoClose = 0
-    let totalOpen = 0
-
-    for (const [index, row] of summaryRows.entries()) {
-      totalGross += row.grossMinutes
-      totalBreak += row.breakMinutes
-      totalNet += row.netMinutes
-      totalShifts += row.shifts
-      totalDepartures += row.departureCount
-      totalAutoClose += row.autoCloseCount
-      totalOpen += row.openShiftCount
-
-      summarySheet.getRow(summaryDataRow).values = [
-        index + 1,
-        row.employeeName,
-        row.alias,
-        row.role,
-        row.sites.join(" | "),
-        row.shifts,
-        row.workDays,
-        row.grossMinutes,
-        row.breakMinutes,
-        row.netMinutes,
-        minutesToClock(row.netMinutes),
-        row.departureCount,
-        row.autoCloseCount,
-        row.openShiftCount,
-      ]
-      applyDataStyle(summarySheet.getRow(summaryDataRow), index % 2 === 1)
-      summaryDataRow += 1
-    }
-
-    if (summaryRows.length === 0) {
-      summarySheet.mergeCells(`A${summaryDataRow}:N${summaryDataRow}`)
-      summarySheet.getCell(`A${summaryDataRow}`).value = "Sin registros para el rango seleccionado."
-      summarySheet.getCell(`A${summaryDataRow}`).font = { size: 9, italic: true }
-      summarySheet.getCell(`A${summaryDataRow}`).alignment = { vertical: "middle", horizontal: "center" }
-      summaryDataRow += 1
-    }
-
-    const summaryTotalsRow = summaryDataRow + 1
-    summarySheet.getRow(summaryTotalsRow).values = [
-      "",
-      "TOTALES",
-      "",
-      "",
-      "",
-      totalShifts,
-      "",
-      totalGross,
-      totalBreak,
-      totalNet,
-      minutesToClock(totalNet),
-      totalDepartures,
-      totalAutoClose,
-      totalOpen,
-    ]
-    summarySheet.getRow(summaryTotalsRow).eachCell((cell: any) => {
-      cell.font = { size: 9, bold: true }
-      cell.alignment = { vertical: "middle", horizontal: "center" }
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "E6E1EA" } }
-      cell.border = {
-        top: { style: "thin" },
-        left: { style: "thin" },
-        bottom: { style: "thin" },
-        right: { style: "thin" },
-      }
-    })
-
-    summarySheet.columns = [
-      { width: 6 },
-      { width: 28 },
-      { width: 14 },
-      { width: 14 },
-      { width: 28 },
-      { width: 10 },
-      { width: 14 },
-      { width: 14 },
-      { width: 14 },
-      { width: 14 },
-      { width: 12 },
-      { width: 14 },
-      { width: 16 },
-      { width: 14 },
-    ]
-
-    const generalSheet = workbook.addWorksheet("Registro general")
-    generalSheet.properties.defaultRowHeight = 18
-    generalSheet.columns = [
-      { width: 6 },
-      { width: 16 },
-      { width: 22 },
-      { width: 18 },
-      { width: 12 },
-      { width: 26 },
-      { width: 12 },
-      { width: 12 },
-      { width: 12 },
-      { width: 12 },
-      { width: 22 },
-      { width: 22 },
-      { width: 34 },
-    ]
-
-    generalSheet.mergeCells("A1:M1")
-    generalSheet.getCell("A1").value = "REGISTRO GENERAL DE ASISTENCIA (SECCIONADO POR PERSONA)"
-    generalSheet.getCell("A1").font = { size: 11, bold: true }
-    generalSheet.getCell("A1").alignment = { vertical: "middle", horizontal: "center" }
-    generalSheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "D9E8F6" } }
-
-    generalSheet.mergeCells("A2:M2")
-    generalSheet.getCell("A2").value = `Periodo: ${formatDate(start, reportTimeZone)} a ${formatDate(end, reportTimeZone)} | Alcance: ${scopeLabel}`
-    generalSheet.getCell("A2").font = { size: 9, italic: true }
-    generalSheet.getCell("A2").alignment = { vertical: "middle", horizontal: "left" }
-
-    let generalRow = 4
-    if (summaryRows.length === 0) {
-      generalSheet.mergeCells(`A${generalRow}:M${generalRow}`)
-      generalSheet.getCell(`A${generalRow}`).value = "Sin turnos para el rango seleccionado."
-      generalSheet.getCell(`A${generalRow}`).font = { size: 9, italic: true }
-      generalSheet.getCell(`A${generalRow}`).alignment = { vertical: "middle", horizontal: "center" }
-    } else {
-      for (const person of summaryRows) {
-        const personShifts = shiftsByEmployee.get(person.employeeId) ?? []
-        generalSheet.mergeCells(`A${generalRow}:M${generalRow}`)
-        const titleCell = generalSheet.getCell(`A${generalRow}`)
-        titleCell.value = `Empleado: ${person.employeeName} | Alias: ${person.alias || "-"} | Rol: ${person.role || "-"}`
-        titleCell.font = { size: 9, bold: true }
-        titleCell.alignment = { vertical: "middle", horizontal: "left" }
-        titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "F1ECF5" } }
-        generalRow += 1
-
-        generalSheet.getRow(generalRow).values = [
-          "No.",
-          "Fecha",
-          "Sede",
-          "Entrada",
-          "Descansos",
-          "Min descanso",
-          "Salida",
-          "Min brutos",
-          "Min netos",
-          "Horas netas",
-          "Salida de sede",
-          "Cierre automático",
-          "Observaciones",
-        ]
-        applyHeaderStyle(generalSheet.getRow(generalRow))
-        generalRow += 1
-
-        let subtotalBreak = 0
-        let subtotalNet = 0
-        let subtotalGross = 0
-
-        for (const [idx, shift] of personShifts.entries()) {
-          subtotalBreak += shift.breakMinutes
-          subtotalNet += shift.netMinutes
-          subtotalGross += shift.grossMinutes
-
-          generalSheet.getRow(generalRow).values = [
-            idx + 1,
-            formatDate(new Date(shift.shiftStartAt), reportTimeZone),
-            shift.siteName || "-",
-            formatTime(shift.shiftStartAt, reportTimeZone),
-            shift.breakRangesLabel,
-            shift.breakMinutes,
-            shift.status === "Abierto" ? "-" : formatTime(shift.shiftEndAt, reportTimeZone),
-            shift.grossMinutes,
-            shift.netMinutes,
-            minutesToClock(shift.netMinutes),
-            shift.departureAt ? formatDateTime(shift.departureAt, reportTimeZone) : "-",
-            shift.autoCloseAt ? formatDateTime(shift.autoCloseAt, reportTimeZone) : "-",
-            shift.observations,
-          ]
-          applyDataStyle(generalSheet.getRow(generalRow), idx % 2 === 1)
-          generalRow += 1
-        }
-
-        generalSheet.getRow(generalRow).values = [
-          "",
-          "Subtotal",
-          "",
-          "",
-          "",
-          subtotalBreak,
-          "",
-          subtotalGross,
-          subtotalNet,
-          minutesToClock(subtotalNet),
-          "",
-          "",
-          "",
-        ]
-        generalSheet.getRow(generalRow).eachCell((cell: any) => {
-          cell.font = { size: 9, bold: true }
-          cell.alignment = { vertical: "middle", horizontal: "center" }
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "E6E1EA" } }
-          cell.border = {
-            top: { style: "thin" },
-            left: { style: "thin" },
-            bottom: { style: "thin" },
-            right: { style: "thin" },
-          }
+    if (responseFormat === "json") {
+      const topEmployees = [...employeeSummaryRows]
+        .sort((a, b) => {
+          if (b.incidentCount !== a.incidentCount) return b.incidentCount - a.incidentCount
+          return a.employeeName.localeCompare(b.employeeName, "es")
         })
-        generalRow += 2
-      }
+        .slice(0, 6)
+      const topSites = [...siteSummaryRows]
+        .sort((a, b) => {
+          if (b.incidentCount !== a.incidentCount) return b.incidentCount - a.incidentCount
+          return a.siteName.localeCompare(b.siteName, "es")
+        })
+        .slice(0, 6)
+
+      return new Response(
+        JSON.stringify({
+          format: "json",
+          scopeLabel,
+          timeZone: reportTimeZone,
+          lateGraceMinutes,
+          autoCloseGraceMinutes,
+          generatedAt: new Date().toISOString(),
+          period: {
+            start: startIso,
+            end: endIso,
+          },
+          summary,
+          topEmployees,
+          topSites,
+          incidents: incidentRows.slice(0, 12),
+          incidentCountTotal: incidentRows.length,
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      )
     }
 
-    const usedSheetNames = new Set<string>(["Resumen gerencial", "Registro general"])
-
-    for (const person of summaryRows) {
-      const personShifts = shiftsByEmployee.get(person.employeeId) ?? []
-      const sheetName = sanitizeSheetName(`EMP ${person.alias || person.employeeName}`, usedSheetNames)
-      const sheet = workbook.addWorksheet(sheetName)
-      sheet.properties.defaultRowHeight = 18
-      sheet.columns = [
-        { width: 6 },
-        { width: 16 },
-        { width: 20 },
-        { width: 12 },
-        { width: 26 },
-        { width: 12 },
-        { width: 12 },
-        { width: 12 },
-        { width: 12 },
-        { width: 12 },
-        { width: 22 },
-        { width: 22 },
-        { width: 34 },
-      ]
-
-      sheet.mergeCells("A1:M1")
-      sheet.getCell("A1").value = `PLANILLA INDIVIDUAL - ${person.employeeName}`
-      sheet.getCell("A1").font = { size: 11, bold: true }
-      sheet.getCell("A1").alignment = { vertical: "middle", horizontal: "center" }
-      sheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "D9E8F6" } }
-
-      sheet.mergeCells("A2:M2")
-      sheet.getCell("A2").value = `Periodo: ${formatDate(start, reportTimeZone)} a ${formatDate(end, reportTimeZone)} | Rol: ${person.role || "-"} | Sede(s): ${person.sites.join(" | ") || "-"}`
-      sheet.getCell("A2").font = { size: 9, italic: true }
-      sheet.getCell("A2").alignment = { vertical: "middle", horizontal: "left" }
-
-      const headerRow = 4
-      sheet.getRow(headerRow).values = [
-        "No.",
-        "Fecha",
-        "Sede",
-        "Entrada",
-        "Descansos",
-        "Min descanso",
-        "Salida",
-        "Min brutos",
-        "Min netos",
-        "Horas netas",
-        "Salida de sede",
-        "Cierre automático",
-        "Observaciones",
-      ]
-      applyHeaderStyle(sheet.getRow(headerRow))
-      sheet.views = [{ state: "frozen", ySplit: headerRow }]
-
-      let rowIndex = headerRow + 1
-      let subtotalBreak = 0
-      let subtotalGross = 0
-      let subtotalNet = 0
-
-      for (const [idx, shift] of personShifts.entries()) {
-        subtotalBreak += shift.breakMinutes
-        subtotalGross += shift.grossMinutes
-        subtotalNet += shift.netMinutes
-
-        sheet.getRow(rowIndex).values = [
-          idx + 1,
-          formatDate(new Date(shift.shiftStartAt), reportTimeZone),
-          shift.siteName || "-",
-          formatTime(shift.shiftStartAt, reportTimeZone),
-          shift.breakRangesLabel,
-          shift.breakMinutes,
-          shift.status === "Abierto" ? "-" : formatTime(shift.shiftEndAt, reportTimeZone),
-          shift.grossMinutes,
-          shift.netMinutes,
-          minutesToClock(shift.netMinutes),
-          shift.departureAt ? formatDateTime(shift.departureAt, reportTimeZone) : "-",
-          shift.autoCloseAt ? formatDateTime(shift.autoCloseAt, reportTimeZone) : "-",
-          shift.observations,
-        ]
-        applyDataStyle(sheet.getRow(rowIndex), idx % 2 === 1)
-        rowIndex += 1
-      }
-
-      if (personShifts.length === 0) {
-        sheet.mergeCells(`A${rowIndex}:M${rowIndex}`)
-        sheet.getCell(`A${rowIndex}`).value = "Sin turnos para el rango seleccionado."
-        sheet.getCell(`A${rowIndex}`).font = { size: 9, italic: true }
-        sheet.getCell(`A${rowIndex}`).alignment = { vertical: "middle", horizontal: "center" }
-        rowIndex += 1
-      }
-
-      const totalsRow = rowIndex + 1
-      sheet.getRow(totalsRow).values = [
-        "",
-        "Totales",
-        "",
-        "",
-        "",
-        subtotalBreak,
-        "",
-        subtotalGross,
-        subtotalNet,
-        minutesToClock(subtotalNet),
-        "",
-        "",
-        "",
-      ]
-      sheet.getRow(totalsRow).eachCell((cell: any) => {
-        cell.font = { size: 9, bold: true }
-        cell.alignment = { vertical: "middle", horizontal: "center" }
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "E6E1EA" } }
-        cell.border = {
-          top: { style: "thin" },
-          left: { style: "thin" },
-          bottom: { style: "thin" },
-          right: { style: "thin" },
-        }
-      })
-    }
+    const workbook = buildWorkbook(
+      rows,
+      employeeSummaryRows,
+      siteSummaryRows,
+      incidentRows,
+      summary,
+      start,
+      end,
+      reportTimeZone,
+      scopeLabel,
+    )
 
     const buffer = await workbook.xlsx.writeBuffer()
     const base64 = toBase64(buffer)
-    const filename = `reporte_asistencia_gerencial_${formatDateForFilename(new Date())}.xlsx`
+    const filename = `reporte_turnos_asistencia_${formatDateForFilename(start)}_${formatDateForFilename(end)}.xlsx`
 
     return new Response(
       JSON.stringify({
         filename,
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         base64,
-        scopeLabel,
-        start: startIso,
-        end: endIso,
-        totalShifts: shifts.length,
-        totalEmployees: summaryRows.length,
       }),
       {
         status: 200,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       },
     )
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return new Response(JSON.stringify({ error: "Unexpected error", message }), {
-      status: 500,
-      headers: corsHeaders,
-    })
+    console.error("[attendance-report]", error)
+    return new Response(
+      JSON.stringify({
+        error: error instanceof Error ? error.message : "Unexpected error",
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    )
   }
 })

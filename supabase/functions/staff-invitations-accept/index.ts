@@ -7,6 +7,66 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 }
 
+async function markInvitationAccepted(
+  supabase: ReturnType<typeof createClient>,
+  params: {
+    userId: string
+    email: string | null
+    role: string
+    siteId: string
+  },
+) {
+  const acceptedAt = new Date().toISOString()
+
+  const tryScopes = [
+    () =>
+      supabase
+        .from("staff_invitations")
+        .update({
+          status: "accepted",
+          accepted_at: acceptedAt,
+          auth_user_id: params.userId,
+          employee_id: params.userId,
+          updated_at: acceptedAt,
+        })
+        .eq("auth_user_id", params.userId)
+        .neq("status", "accepted")
+        .select("id"),
+    () =>
+      params.email
+        ? supabase
+            .from("staff_invitations")
+            .update({
+              status: "accepted",
+              accepted_at: acceptedAt,
+              auth_user_id: params.userId,
+              employee_id: params.userId,
+              role_code: params.role,
+              site_id: params.siteId,
+              updated_at: acceptedAt,
+            })
+            .eq("email", params.email.toLowerCase())
+            .in("status", ["sent", "linked_existing_user", "expired"])
+            .or(`role_code.eq.${params.role},staff_role.eq.${params.role}`)
+            .or(`site_id.eq.${params.siteId},staff_site_id.eq.${params.siteId}`)
+            .select("id")
+        : Promise.resolve({ data: [], error: null }),
+  ]
+
+  for (const run of tryScopes) {
+    const { data, error } = await run()
+    if (error) {
+      console.error("[staff-invitations-accept] update invitation error:", error)
+      continue
+    }
+    if (Array.isArray(data) && data.length > 0) {
+      return data[0]?.id ?? null
+    }
+  }
+
+  return null
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders })
@@ -210,6 +270,13 @@ serve(async (req) => {
     )
 
     if (siteError) throw siteError
+
+    await markInvitationAccepted(supabase, {
+      userId: user.id,
+      email: user.email ?? null,
+      role,
+      siteId,
+    })
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Invitation activation failed"

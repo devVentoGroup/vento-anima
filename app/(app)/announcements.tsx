@@ -48,6 +48,9 @@ type AnnouncementFormState = {
   tag: Announcement["tag"]
 }
 
+type SiteOption = { id: string; name: string }
+type RoleOption = { code: string; name: string }
+
 const TAG_OPTIONS: Announcement["tag"][] = ["IMPORTANTE", "INFO", "ALERTA"]
 
 const formatDate = (iso: string | null): string => {
@@ -91,6 +94,13 @@ export default function AnnouncementsScreen() {
   })
   const [source, setSource] = useState<"remote" | "fallback">("fallback")
   const [keyboardHeight, setKeyboardHeight] = useState(0)
+  const [sites, setSites] = useState<SiteOption[]>([])
+  const [roles, setRoles] = useState<RoleOption[]>([])
+  const [notifyTarget, setNotifyTarget] = useState<Announcement | null>(null)
+  const [notifySiteIds, setNotifySiteIds] = useState<string[]>([])
+  const [notifyRoleCodes, setNotifyRoleCodes] = useState<string[]>([])
+  const [isNotifyOpen, setIsNotifyOpen] = useState(false)
+  const [isSendingNotify, setIsSendingNotify] = useState(false)
   const isKeyboardVisible = keyboardHeight > 0
   const modalTopGap = Math.max(14, insets.top + 8)
   const modalBottomGap = 20
@@ -133,6 +143,19 @@ export default function AnnouncementsScreen() {
     } finally {
       setIsLoading(false)
       setIsRefreshing(false)
+    }
+  }, [])
+
+  const loadAudienceOptions = useCallback(async () => {
+    try {
+      const [sitesRes, rolesRes] = await Promise.all([
+        supabase.from("sites").select("id, name").eq("is_active", true).order("name", { ascending: true }),
+        supabase.from("roles").select("code, name").eq("is_active", true).order("name", { ascending: true }),
+      ])
+      if (sitesRes.data) setSites((sitesRes.data as SiteOption[]) ?? [])
+      if (rolesRes.data) setRoles((rolesRes.data as RoleOption[]) ?? [])
+    } catch (err) {
+      console.error("[ANNOUNCEMENTS] Audience options error:", err)
     }
   }, [])
 
@@ -183,18 +206,70 @@ export default function AnnouncementsScreen() {
     resetForm()
   }
 
-  const notifyWorkers = async (announcement: Announcement) => {
-    const { error } = await supabase.functions.invoke("announcement-notify", {
-      body: {
-        announcement_id: announcement.id,
-        title: announcement.title,
-        body: announcement.body,
-        tag: announcement.tag,
-      },
-    })
+  const notifyWorkers = async (
+    announcement: Announcement,
+    opts?: { site_ids?: string[]; roles?: string[] },
+  ) => {
+    const body: Record<string, unknown> = {
+      announcement_id: announcement.id,
+      title: announcement.title,
+      body: announcement.body,
+      tag: announcement.tag,
+    }
+    if (opts?.site_ids?.length) body.site_ids = opts.site_ids
+    if (opts?.roles?.length) body.roles = opts.roles
+    const { error } = await supabase.functions.invoke("announcement-notify", { body })
     if (error) {
       console.error("[ANNOUNCEMENTS] Notification error:", error)
+      throw error
     }
+  }
+
+  const openNotifyModal = (announcement: Announcement) => {
+    setNotifyTarget(announcement)
+    setNotifySiteIds([])
+    setNotifyRoleCodes([])
+    setIsNotifyOpen(true)
+    void loadAudienceOptions()
+  }
+
+  const closeNotifyModal = () => {
+    setIsNotifyOpen(false)
+    setNotifyTarget(null)
+    setNotifySiteIds([])
+    setNotifyRoleCodes([])
+  }
+
+  const sendNotify = async () => {
+    if (!notifyTarget) return
+    setIsSendingNotify(true)
+    try {
+      await notifyWorkers(notifyTarget, {
+        site_ids: notifySiteIds.length > 0 ? notifySiteIds : undefined,
+        roles: notifyRoleCodes.length > 0 ? notifyRoleCodes : undefined,
+      })
+      Alert.alert("Novedades", "Notificación enviada.")
+      closeNotifyModal()
+    } catch (err) {
+      Alert.alert(
+        "Novedades",
+        getUserFacingAuthError(err, "No se pudo enviar la notificación."),
+      )
+    } finally {
+      setIsSendingNotify(false)
+    }
+  }
+
+  const toggleNotifySite = (id: string) => {
+    setNotifySiteIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    )
+  }
+
+  const toggleNotifyRole = (code: string) => {
+    setNotifyRoleCodes((prev) =>
+      prev.includes(code) ? prev.filter((x) => x !== code) : [...prev, code],
+    )
   }
 
   const handleSave = async () => {
@@ -363,6 +438,12 @@ export default function AnnouncementsScreen() {
               {canManageAnnouncements ? (
                 <View style={styles.actionsRow}>
                   <TouchableOpacity
+                    onPress={() => openNotifyModal(item)}
+                    style={[ANNOUNCEMENTS_UI.tag, styles.actionChipNotify]}
+                  >
+                    <Text style={styles.actionTextNotify}>Enviar notificación</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
                     onPress={() => openEdit(item)}
                     style={[ANNOUNCEMENTS_UI.tag, styles.actionChip]}
                   >
@@ -453,6 +534,95 @@ export default function AnnouncementsScreen() {
           </View>
         </Pressable>
       </Modal>
+
+      <Modal transparent visible={isNotifyOpen} animationType="fade">
+        <Pressable
+          style={[styles.modalOverlay, styles.modalOverlayCentered, { padding: 20 }]}
+          onPress={closeNotifyModal}
+        >
+          <Pressable
+            style={[styles.modalCard, styles.notifyModalCard]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text style={styles.modalTitle}>Enviar notificación</Text>
+            {notifyTarget ? (
+              <>
+                <Text style={styles.notifyTargetTitle} numberOfLines={1}>
+                  {notifyTarget.title}
+                </Text>
+                <Text style={styles.notifyAudienceLabel}>Enviar a</Text>
+                <Text style={styles.notifyAudienceHint}>
+                  Deja todo sin marcar para enviar a todos. Marca sedes y/o roles para filtrar.
+                </Text>
+                {sites.length > 0 ? (
+                  <View style={styles.notifySection}>
+                    <Text style={styles.notifySectionTitle}>Por sede</Text>
+                    <View style={styles.notifyChips}>
+                      {sites.map((s) => (
+                        <TouchableOpacity
+                          key={s.id}
+                          onPress={() => toggleNotifySite(s.id)}
+                          style={[
+                            ANNOUNCEMENTS_UI.tag,
+                            notifySiteIds.includes(s.id) ? styles.tagActive : styles.tagInactive,
+                          ]}
+                        >
+                          <Text
+                            style={
+                              notifySiteIds.includes(s.id) ? styles.tagTextActive : styles.tagTextInactive
+                            }
+                          >
+                            {s.name}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                ) : null}
+                {roles.length > 0 ? (
+                  <View style={styles.notifySection}>
+                    <Text style={styles.notifySectionTitle}>Por rol</Text>
+                    <View style={styles.notifyChips}>
+                      {roles.map((r) => (
+                        <TouchableOpacity
+                          key={r.code}
+                          onPress={() => toggleNotifyRole(r.code)}
+                          style={[
+                            ANNOUNCEMENTS_UI.tag,
+                            notifyRoleCodes.includes(r.code) ? styles.tagActive : styles.tagInactive,
+                          ]}
+                        >
+                          <Text
+                            style={
+                              notifyRoleCodes.includes(r.code) ? styles.tagTextActive : styles.tagTextInactive
+                            }
+                          >
+                            {r.name}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                ) : null}
+                <View style={styles.modalActions}>
+                  <TouchableOpacity onPress={closeNotifyModal} style={[ANNOUNCEMENTS_UI.tag, styles.cancelChip]}>
+                    <Text style={styles.cancelText}>Cancelar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={sendNotify}
+                    disabled={isSendingNotify}
+                    style={[ANNOUNCEMENTS_UI.tag, styles.saveChip, isSendingNotify ? styles.saveChipDisabled : null]}
+                  >
+                    <Text style={styles.saveText}>
+                      {isSendingNotify ? "Enviando..." : "Enviar"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   )
 }
@@ -515,6 +685,15 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     marginTop: 8,
     marginRight: 2,
+  },
+  actionChipNotify: {
+    borderColor: COLORS.accent,
+    backgroundColor: "rgba(226, 0, 106, 0.08)",
+  },
+  actionTextNotify: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: COLORS.accent,
   },
   actionChip: {
     borderColor: COLORS.border,
@@ -629,5 +808,38 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
     color: COLORS.accent,
+  },
+  notifyModalCard: {
+    maxHeight: "80%",
+  },
+  notifyTargetTitle: {
+    marginTop: 6,
+    fontSize: 13,
+    color: COLORS.neutral,
+  },
+  notifyAudienceLabel: {
+    marginTop: 14,
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+  notifyAudienceHint: {
+    marginTop: 4,
+    fontSize: 12,
+    color: COLORS.neutral,
+  },
+  notifySection: {
+    marginTop: 10,
+  },
+  notifySectionTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+  notifyChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 6,
   },
 })

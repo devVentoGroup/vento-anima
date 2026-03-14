@@ -17,6 +17,7 @@ import { COLORS } from "@/constants/colors";
 import { CONTENT_HORIZONTAL_PADDING, CONTENT_MAX_WIDTH } from "@/constants/layout";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
+import { useRoleCapabilities } from "@/hooks/use-role-capabilities";
 import TeamEmptyState from "@/components/team/TeamEmptyState";
 import TeamMemberCard from "@/components/team/TeamMemberCard";
 import TeamEditModal from "@/components/team/TeamEditModal";
@@ -46,6 +47,22 @@ type EmployeeSiteRowDb = Omit<EmployeeSiteRow, "sites"> & {
   sites?: { id: string; name: string } | { id: string; name: string }[] | null;
 };
 
+type StaffInvitationRow = {
+  id: string;
+  email: string | null;
+  full_name: string | null;
+  status: string;
+  resend_count: number | null;
+  expires_at: string | null;
+  cancelled_at: string | null;
+  last_sent_at: string | null;
+  updated_at: string | null;
+  role_code: string | null;
+  staff_role: string | null;
+  site_id: string | null;
+  staff_site_id: string | null;
+};
+
 const UI = TEAM_UI;
 
 const OWNER_ROLE = "propietario";
@@ -57,11 +74,16 @@ export default function TeamScreen() {
   const insets = useSafeAreaInsets();
   const { user, employee, selectedSiteId } = useAuth();
   const role = employee?.role ?? null;
+  const { has: hasCapability, loaded: capabilitiesLoaded } = useRoleCapabilities(role);
   const isOwner = role === OWNER_ROLE;
   const isGlobalManager = role === GLOBAL_MANAGER_ROLE;
   const isManager = role === MANAGER_ROLE;
-  const canViewTeam = role ? MANAGEMENT_ROLES.has(role) : false;
-  const canManageTeam = canViewTeam;
+  const canViewTeam = capabilitiesLoaded
+    ? hasCapability("team.view")
+    : Boolean(role && MANAGEMENT_ROLES.has(role));
+  const canManageTeam = capabilitiesLoaded
+    ? hasCapability("team.invite")
+    : Boolean(role && MANAGEMENT_ROLES.has(role));
   const canViewAllSites = isOwner || isGlobalManager;
   const canChangeSites = canViewAllSites;
   const ownerDeleteUid = process.env.EXPO_PUBLIC_ANIMA_OWNER_DELETE_UID ?? null;
@@ -71,10 +93,14 @@ export default function TeamScreen() {
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [sites, setSites] = useState<SiteRow[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
+  const [pendingInvitations, setPendingInvitations] = useState<StaffInvitationRow[]>([]);
   const [search, setSearch] = useState("");
   const [siteFilterId, setSiteFilterId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoadingInvitations, setIsLoadingInvitations] = useState(false);
+  const [resendingInvitationId, setResendingInvitationId] = useState<string | null>(null);
+  const [cancellingInvitationId, setCancellingInvitationId] = useState<string | null>(null);
 
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [activePicker, setActivePicker] = useState<
@@ -104,6 +130,7 @@ export default function TeamScreen() {
     fullName: "",
     role: "",
     siteId: null,
+    expiresAt: "",
   });
   const [deletingEmployee, setDeletingEmployee] = useState<EmployeeRow | null>(
     null,
@@ -202,9 +229,36 @@ export default function TeamScreen() {
     }
   }, [user]);
 
+  const loadInvitations = useCallback(async () => {
+    if (!user) return;
+    setIsLoadingInvitations(true);
+    try {
+      let query = supabase
+        .from("staff_invitations")
+        .select(
+          "id, email, full_name, status, resend_count, expires_at, cancelled_at, last_sent_at, updated_at, role_code, staff_role, site_id, staff_site_id",
+        )
+        .in("status", ["sent", "expired", "linked_existing_user"])
+        .order("updated_at", { ascending: false });
+
+      if (isManager && managerSiteId) {
+        query = query.or(`site_id.eq.${managerSiteId},staff_site_id.eq.${managerSiteId}`);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      setPendingInvitations((data as StaffInvitationRow[]) ?? []);
+    } catch (err) {
+      console.error("Invitations load error:", err);
+      setPendingInvitations([]);
+    } finally {
+      setIsLoadingInvitations(false);
+    }
+  }, [user, isManager, managerSiteId]);
+
   const loadAll = useCallback(async () => {
-    await Promise.all([loadEmployees(), loadSites(), loadRoles()]);
-  }, [loadEmployees, loadSites, loadRoles]);
+    await Promise.all([loadEmployees(), loadSites(), loadRoles(), loadInvitations()]);
+  }, [loadEmployees, loadSites, loadRoles, loadInvitations]);
 
   useFocusEffect(
     useCallback(() => {
@@ -521,6 +575,7 @@ export default function TeamScreen() {
       fullName: "",
       role: "",
       siteId: defaultSite,
+      expiresAt: "",
     });
     setInviteEmailSent(null);
     setInviteSuccessMessage(null);
@@ -562,16 +617,28 @@ export default function TeamScreen() {
 
     setIsInviting(true);
     try {
+      const body: {
+        email: string;
+        full_name: string | null;
+        role: string;
+        site_id: string;
+        expires_at?: string;
+      } = {
+        email: inviteForm.email.trim(),
+        full_name: inviteForm.fullName.trim() || null,
+        role: inviteForm.role,
+        site_id: inviteForm.siteId,
+      };
+      const expiresAtTrim = inviteForm.expiresAt?.trim();
+      if (expiresAtTrim) {
+        const date = new Date(expiresAtTrim);
+        if (!Number.isNaN(date.getTime())) {
+          body.expires_at = date.toISOString();
+        }
+      }
       const { data, error } = await supabase.functions.invoke(
         "staff-invitations-create",
-        {
-          body: {
-            email: inviteForm.email.trim(),
-            full_name: inviteForm.fullName.trim() || null,
-            role: inviteForm.role,
-            site_id: inviteForm.siteId,
-          },
-        },
+        { body },
       );
 
       if (error) {
@@ -595,6 +662,7 @@ export default function TeamScreen() {
           ? (data as { message?: string }).message ?? null
           : null,
       );
+      await loadInvitations();
     } catch (err) {
       console.error("Invite error:", err);
       Alert.alert(
@@ -608,6 +676,152 @@ export default function TeamScreen() {
       setIsInviting(false);
     }
   };
+
+  const getEffectiveInvitationStatus = useCallback((invitation: StaffInvitationRow) => {
+    if (
+      invitation.status === "sent" &&
+      invitation.expires_at &&
+      new Date(invitation.expires_at).getTime() < Date.now()
+    ) {
+      return "expired";
+    }
+    return invitation.status;
+  }, []);
+
+  const getInvitationStatusLabel = useCallback((status: string) => {
+    if (status === "sent") return "Pendiente";
+    if (status === "expired") return "Vencida"
+    if (status === "linked_existing_user") return "Agregado al equipo";
+    if (status === "cancelled") return "Cancelada";
+    return status;
+  }, []);
+
+  const formatInvitationDate = useCallback((value: string | null) => {
+    if (!value) return "Sin fecha";
+    return new Date(value).toLocaleString("es-CO", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }, []);
+
+  const handleResendInvitation = useCallback(
+    async (invitation: StaffInvitationRow) => {
+      if (!canManageTeam) return;
+      const effectiveStatus = getEffectiveInvitationStatus(invitation);
+      if (effectiveStatus === "linked_existing_user") {
+        Alert.alert(
+          "Equipo",
+          "Este usuario ya existía en el sistema. Si necesita acceso, debe usar «¿Olvidaste tu contraseña?» en ANIMA.",
+        );
+        return;
+      }
+
+      setResendingInvitationId(invitation.id);
+      try {
+        const { data, error } = await supabase.functions.invoke(
+          "staff-invitations-resend",
+          {
+            body: { staff_invitation_id: invitation.id },
+          },
+        );
+
+        if (error) {
+          Alert.alert(
+            "Equipo",
+            getUserFacingAuthError(
+              error,
+              "No se pudo reenviar la invitación. Intenta nuevamente.",
+            ),
+          );
+          return;
+        }
+
+        Alert.alert(
+          "Equipo",
+          String(
+            (data as { message?: string })?.message ??
+              "Invitación reenviada correctamente.",
+          ),
+        );
+        await loadInvitations();
+      } catch (err) {
+        console.error("Resend invitation error:", err);
+        Alert.alert(
+          "Equipo",
+          getUserFacingAuthError(
+            err,
+            "No se pudo reenviar la invitación. Intenta nuevamente.",
+          ),
+        );
+      } finally {
+        setResendingInvitationId(null);
+      }
+    },
+    [canManageTeam, getEffectiveInvitationStatus, loadInvitations],
+  );
+
+  const handleCancelInvitation = useCallback(
+    async (invitation: StaffInvitationRow) => {
+      if (!canManageTeam) return;
+
+      Alert.alert(
+        "Cancelar invitación",
+        `Se cancelará la invitación de ${invitation.email ?? "este correo"}.`,
+        [
+          { text: "Cerrar", style: "cancel" },
+          {
+            text: "Cancelar invitación",
+            style: "destructive",
+            onPress: async () => {
+              setCancellingInvitationId(invitation.id);
+              try {
+                const { data, error } = await supabase.functions.invoke(
+                  "staff-invitations-cancel",
+                  {
+                    body: { staff_invitation_id: invitation.id },
+                  },
+                );
+
+                if (error) {
+                  Alert.alert(
+                    "Equipo",
+                    getUserFacingAuthError(
+                      error,
+                      "No se pudo cancelar la invitación.",
+                    ),
+                  );
+                  return;
+                }
+
+                Alert.alert(
+                  "Equipo",
+                  String(
+                    (data as { message?: string })?.message ??
+                      "Invitación cancelada correctamente.",
+                  ),
+                );
+                await loadInvitations();
+              } catch (err) {
+                console.error("Cancel invitation error:", err);
+                Alert.alert(
+                  "Equipo",
+                  getUserFacingAuthError(
+                    err,
+                    "No se pudo cancelar la invitación.",
+                  ),
+                );
+              } finally {
+                setCancellingInvitationId(null);
+              }
+            },
+          },
+        ],
+      );
+    },
+    [canManageTeam, loadInvitations],
+  );
 
   const closeDelete = () => {
     setDeletingEmployee(null);
@@ -869,6 +1083,151 @@ export default function TeamScreen() {
           <TeamEmptyState />
         ) : null}
 
+        <View style={{ marginTop: 20 }}>
+          <View style={styles.sectionHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sectionTitle}>Invitaciones pendientes</Text>
+              <Text style={styles.sectionSubtitle}>
+                Accesos enviados o pendientes de seguimiento.
+              </Text>
+            </View>
+            <View style={[UI.pill, styles.sectionCountPill]}>
+              <Text style={styles.sectionCountText}>{pendingInvitations.length}</Text>
+            </View>
+          </View>
+
+          {isLoadingInvitations ? (
+            <View style={{ paddingTop: 12, alignItems: "center" }}>
+              <ActivityIndicator color={COLORS.accent} />
+            </View>
+          ) : null}
+
+          {!isLoadingInvitations && pendingInvitations.length === 0 ? (
+            <View style={styles.pendingEmptyCard}>
+              <Text style={styles.pendingEmptyTitle}>Sin pendientes</Text>
+              <Text style={styles.pendingEmptyText}>
+                Cuando envies invitaciones o haya accesos por cerrar, apareceran aqui.
+              </Text>
+            </View>
+          ) : null}
+
+          <View style={{ marginTop: 12, gap: 12 }}>
+            {pendingInvitations.map((invitation) => {
+              const effectiveStatus = getEffectiveInvitationStatus(invitation);
+              const invitationSiteId = invitation.site_id ?? invitation.staff_site_id;
+              const invitationRole = invitation.role_code ?? invitation.staff_role ?? "";
+              const siteName =
+                invitationSiteId
+                  ? sites.find((site) => site.id === invitationSiteId)?.name ?? "Sede"
+                  : "Sin sede";
+              const isLinkedExisting = effectiveStatus === "linked_existing_user";
+              const canResend = !isLinkedExisting && effectiveStatus !== "cancelled";
+              const canCancel =
+                effectiveStatus === "sent" || effectiveStatus === "expired";
+              const isResending = resendingInvitationId === invitation.id;
+              const isCancelling = cancellingInvitationId === invitation.id;
+
+              return (
+                <View key={invitation.id} style={[UI.card, styles.pendingCard]}>
+                  <View style={styles.pendingHeader}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.pendingName}>
+                        {invitation.full_name?.trim() || invitation.email || "Invitación"}
+                      </Text>
+                      {invitation.email ? (
+                        <Text style={styles.pendingEmail}>{invitation.email}</Text>
+                      ) : null}
+                    </View>
+                    <View
+                      style={[
+                        UI.pill,
+                        styles.pendingStatusPill,
+                        isLinkedExisting
+                          ? styles.pendingStatusLinked
+                          : effectiveStatus === "expired"
+                            ? styles.pendingStatusExpired
+                            : effectiveStatus === "cancelled"
+                              ? styles.pendingStatusCancelled
+                              : styles.pendingStatusSent,
+                      ]}
+                    >
+                      <Text style={styles.pendingStatusText}>
+                        {getInvitationStatusLabel(effectiveStatus)}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.pendingMetaRow}>
+                    <Text style={styles.pendingMetaLabel}>Rol</Text>
+                    <Text style={styles.pendingMetaValue}>{roleLabel(invitationRole)}</Text>
+                  </View>
+                  <View style={styles.pendingMetaRow}>
+                    <Text style={styles.pendingMetaLabel}>Sede</Text>
+                    <Text style={styles.pendingMetaValue}>{siteName}</Text>
+                  </View>
+                  <View style={styles.pendingMetaRow}>
+                    <Text style={styles.pendingMetaLabel}>Ultimo envio</Text>
+                    <Text style={styles.pendingMetaValue}>
+                      {formatInvitationDate(invitation.last_sent_at ?? invitation.updated_at)}
+                    </Text>
+                  </View>
+                  <View style={styles.pendingMetaRow}>
+                    <Text style={styles.pendingMetaLabel}>Expira</Text>
+                    <Text style={styles.pendingMetaValue}>
+                      {formatInvitationDate(invitation.expires_at)}
+                    </Text>
+                  </View>
+                  <View style={styles.pendingMetaRow}>
+                    <Text style={styles.pendingMetaLabel}>Reenvios</Text>
+                    <Text style={styles.pendingMetaValue}>
+                      {Number(invitation.resend_count ?? 0)}
+                    </Text>
+                  </View>
+
+                  <View style={styles.pendingActions}>
+                    <TouchableOpacity
+                      disabled={!canResend || isResending}
+                      onPress={() => void handleResendInvitation(invitation)}
+                      style={[
+                        styles.pendingActionButton,
+                        canResend
+                          ? styles.pendingActionPrimary
+                          : styles.pendingActionDisabled,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.pendingActionText,
+                          canResend
+                            ? styles.pendingActionTextPrimary
+                            : styles.pendingActionTextDisabled,
+                        ]}
+                      >
+                        {isResending
+                          ? "Reenviando..."
+                          : canResend
+                            ? "Reenviar"
+                            : "Usar recuperación"}
+                      </Text>
+                    </TouchableOpacity>
+                    {canCancel ? (
+                      <TouchableOpacity
+                        disabled={isCancelling}
+                        onPress={() => void handleCancelInvitation(invitation)}
+                        style={[styles.pendingActionButton, styles.pendingActionSecondary]}
+                      >
+                        <Text style={[styles.pendingActionText, styles.pendingActionTextSecondary]}>
+                          {isCancelling ? "Cancelando..." : "Cancelar"}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
         <View style={{ marginTop: 18, gap: 12 }}>
           {filteredEmployees.map((item) => {
             const isSelf = item.id === user?.id;
@@ -974,6 +1333,144 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: COLORS.porcelain,
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: COLORS.text,
+  },
+  sectionSubtitle: {
+    marginTop: 4,
+    fontSize: 13,
+    color: COLORS.textMuted,
+  },
+  sectionCountPill: {
+    borderColor: COLORS.accent,
+    backgroundColor: "rgba(226, 0, 106, 0.10)",
+  },
+  sectionCountText: {
+    fontWeight: "800",
+    color: COLORS.accent,
+  },
+  pendingEmptyCard: {
+    marginTop: 12,
+    padding: 18,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.white,
+  },
+  pendingEmptyTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: COLORS.text,
+  },
+  pendingEmptyText: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 19,
+    color: COLORS.textMuted,
+  },
+  pendingCard: {
+    padding: 18,
+  },
+  pendingHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  pendingName: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: COLORS.text,
+  },
+  pendingEmail: {
+    marginTop: 4,
+    fontSize: 13,
+    color: COLORS.textMuted,
+  },
+  pendingStatusPill: {
+    marginTop: 2,
+  },
+  pendingStatusSent: {
+    borderColor: COLORS.accent,
+    backgroundColor: "rgba(226, 0, 106, 0.10)",
+  },
+  pendingStatusExpired: {
+    borderColor: "#B45309",
+    backgroundColor: "#FFFBEB",
+  },
+  pendingStatusLinked: {
+    borderColor: "#0F766E",
+    backgroundColor: "#ECFEFF",
+  },
+  pendingStatusCancelled: {
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.porcelainAlt,
+  },
+  pendingStatusText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: COLORS.text,
+  },
+  pendingMetaRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 12,
+  },
+  pendingMetaLabel: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+  },
+  pendingMetaValue: {
+    flex: 1,
+    textAlign: "right",
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.text,
+  },
+  pendingActions: {
+    marginTop: 14,
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 10,
+  },
+  pendingActionButton: {
+    borderRadius: 999,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+  },
+  pendingActionPrimary: {
+    borderColor: COLORS.accent,
+    backgroundColor: "rgba(226, 0, 106, 0.10)",
+  },
+  pendingActionDisabled: {
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.porcelainAlt,
+  },
+  pendingActionSecondary: {
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.white,
+  },
+  pendingActionText: {
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  pendingActionTextPrimary: {
+    color: COLORS.accent,
+  },
+  pendingActionTextDisabled: {
+    color: COLORS.textMuted,
+  },
+  pendingActionTextSecondary: {
+    color: COLORS.text,
   },
   title: {
     fontSize: 26,

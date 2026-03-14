@@ -1,4 +1,6 @@
-import { Tabs } from "expo-router"
+import { useEffect } from "react"
+import { Tabs, useRouter } from "expo-router"
+import * as Notifications from "expo-notifications"
 import { Ionicons } from "@expo/vector-icons"
 import { Platform } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -8,7 +10,32 @@ import { useAuth } from "@/contexts/auth-context"
 export default function AppLayout() {
   const { employee } = useAuth()
   const insets = useSafeAreaInsets()
+  const router = useRouter()
   const role = employee?.role ?? null
+
+  useEffect(() => {
+    const openShiftScreenIfNeeded = (data: Record<string, unknown> | undefined) => {
+      if (
+        data?.type === "shift_update" ||
+        data?.type === "shift" ||
+        data?.type === "shift_end_reminder" ||
+        data?.type === "shift_auto_checkout"
+      ) {
+        router.replace("/shifts")
+      }
+    }
+
+    Notifications.getLastNotificationResponseAsync().then((response) => {
+      const data = response?.notification?.request?.content?.data as Record<string, unknown> | undefined
+      openShiftScreenIfNeeded(data)
+    })
+
+    const sub = Notifications.addNotificationResponseReceivedListener((event) => {
+      const data = event.notification.request.content.data as Record<string, unknown> | undefined
+      openShiftScreenIfNeeded(data)
+    })
+    return () => sub.remove()
+  }, [router])
   const canSeeTeam =
     role === "propietario" || role === "gerente_general" || role === "gerente"
   const androidBottomInset = Platform.OS === "android" ? Math.max(insets.bottom, 16) : 0
@@ -90,6 +117,14 @@ export default function AppLayout() {
               color={color}
             />
           ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="shifts"
+        options={{
+          title: "Mis turnos",
+          href: null,
         }}
       />
 

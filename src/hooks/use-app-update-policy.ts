@@ -62,6 +62,24 @@ function getInstalledVersion(): string {
   return runtimeVersion || expoConfigVersion || "0.0.0"
 }
 
+function normalizeStoreUrl(
+  value: string | null | undefined,
+  platform: "ios" | "android" | null,
+): string | null {
+  if (!value || typeof value !== "string") return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+
+  // Guard against placeholders that can break forced-update UX in production.
+  if (trimmed.includes("id0000000000")) return null
+
+  if (platform === "ios" && trimmed.startsWith("https://apps.apple.com/")) {
+    return trimmed.replace("https://", "itms-apps://")
+  }
+
+  return trimmed
+}
+
 export function useAppUpdatePolicy(appKey: string) {
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo>(DEFAULT_STATE)
   const [optionalDismissedVersion, setOptionalDismissedVersion] = useState<string | null>(null)
@@ -73,16 +91,25 @@ export function useAppUpdatePolicy(appKey: string) {
   }, [])
 
   const openStore = useCallback(async () => {
-    if (!updateInfo.storeUrl) return
+    if (!updateInfo.storeUrl) {
+      Alert.alert("Actualización", "No encontramos un enlace válido de tienda para esta versión.")
+      return
+    }
+
+    const candidates =
+      Platform.OS === "ios" && updateInfo.storeUrl.startsWith("itms-apps://")
+        ? [updateInfo.storeUrl, updateInfo.storeUrl.replace("itms-apps://", "https://")]
+        : [updateInfo.storeUrl]
 
     try {
-      const canOpen = await Linking.canOpenURL(updateInfo.storeUrl)
-      if (!canOpen) {
-        Alert.alert("Actualización", "No pudimos abrir la tienda en este dispositivo.")
+      for (const url of candidates) {
+        const canOpen = await Linking.canOpenURL(url)
+        if (!canOpen) continue
+        await Linking.openURL(url)
         return
       }
 
-      await Linking.openURL(updateInfo.storeUrl)
+      Alert.alert("Actualización", "No pudimos abrir la tienda en este dispositivo.")
     } catch (error) {
       console.error("[update] No se pudo abrir URL de tienda:", error)
       Alert.alert("Actualización", "No pudimos abrir la tienda. Intenta manualmente.")
@@ -103,6 +130,17 @@ export function useAppUpdatePolicy(appKey: string) {
     }
 
     const currentVersion = getInstalledVersion()
+
+    const appVariant =
+      typeof Constants?.expoConfig?.extra?.appVariant === "string"
+        ? String(Constants.expoConfig.extra.appVariant).toLowerCase()
+        : null
+    const isDevelopmentRuntime = __DEV__ || appVariant === "development" || appKey.endsWith("_dev")
+    if (isDevelopmentRuntime) {
+      setUpdateInfo({ ...DEFAULT_STATE, currentVersion, loading: false })
+      return
+    }
+
     setUpdateInfo((prev) => ({ ...prev, loading: true, currentVersion }))
 
     try {
@@ -131,16 +169,17 @@ export function useAppUpdatePolicy(appKey: string) {
         typeof data.latest_version === "string" && data.latest_version.trim().length > 0
           ? data.latest_version.trim()
           : null
-      const storeUrl =
-        typeof data.store_url === "string" && data.store_url.trim().length > 0
-          ? data.store_url.trim()
-          : null
+      const storeUrl = normalizeStoreUrl(
+        typeof data.store_url === "string" ? data.store_url : null,
+        platform,
+      )
 
       const belowMin = compareVersions(currentVersion, minVersion) < 0
       const behindLatest =
         latestVersion != null ? compareVersions(currentVersion, latestVersion) < 0 : false
       const shouldForce = Boolean(data.force_update) && behindLatest
-      const required = belowMin || shouldForce
+      const requiredByPolicy = belowMin || shouldForce
+      const required = requiredByPolicy && Boolean(storeUrl)
       const optional = !required && behindLatest
       const targetVersion = latestVersion || minVersion
 

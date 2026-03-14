@@ -75,7 +75,13 @@ export function SitePickerModal({
                     {site.name}
                   </Text>
                   <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
-                    {site.effectiveRadiusMeters > 0 ? `${site.distanceMeters}m - radio ${site.effectiveRadiusMeters}m` : `${site.distanceMeters}m - radio sin configurar`}
+                    {site.distanceMeters != null
+                      ? site.effectiveRadiusMeters > 0
+                        ? `${site.distanceMeters}m - radio ${site.effectiveRadiusMeters}m`
+                        : `${site.distanceMeters}m - radio sin configurar`
+                      : site.effectiveRadiusMeters > 0
+                        ? `Distancia no disponible - radio ${site.effectiveRadiusMeters}m`
+                        : "Distancia no disponible - radio sin configurar"}
                   </Text>
                 </TouchableOpacity>
               ))

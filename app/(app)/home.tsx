@@ -8,6 +8,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  Linking,
 } from "react-native";
 import { useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -29,8 +30,19 @@ import { DateRangeModal } from "@/components/home/DateRangeModal";
 import { ReportFilterModal } from "@/components/home/ReportFilterModal";
 import { SitePickerModal } from "@/components/home/SitePickerModal";
 import { UserMenuModal } from "@/components/home/UserMenuModal";
+import {
+  formatShiftDateLabel,
+  formatShiftMinutes,
+  getShiftDurationMinutes,
+  getShiftRangeLabel,
+  getShiftSiteName,
+  getShiftStatusMeta,
+  isUpcomingShift,
+  type ShiftRow,
+} from "@/components/shifts/utils";
 import { PALETTE, RGBA } from "@/components/home/theme";
 import { CONTENT_HORIZONTAL_PADDING, CONTENT_MAX_WIDTH } from "@/constants/layout";
+import { calculateDistance } from "@/lib/geolocation";
 function formatClock(value: string | null) {
   if (!value) return "--:--";
   const date = new Date(value);
@@ -51,6 +63,51 @@ type ReportEmployeeOption = {
 type ReportSiteOption = {
   id: string;
   label: string;
+};
+
+type ReportSummarySnapshot = {
+  scheduledShifts: number;
+  attendedShifts: number;
+  lateCount: number;
+  noShowCount: number;
+  openCount: number;
+  missingCloseCount: number;
+  autoCloseCount: number;
+  departureCount: number;
+  scheduledMinutes: number;
+  netMinutes: number;
+  attendanceRate: number;
+  punctualityRate: number;
+};
+
+type ReportEmployeeSummary = {
+  employeeName: string;
+  incidentCount: number;
+  lateCount: number;
+  noShowCount: number;
+  openCount: number;
+};
+
+type ReportSiteSummary = {
+  siteName: string;
+  incidentCount: number;
+  lateCount: number;
+  noShowCount: number;
+  openCount: number;
+};
+
+type ReportIncidentSummary = {
+  category: string;
+  employeeName: string;
+  detail: string;
+};
+
+type ReportSummaryResponse = {
+  summary: ReportSummarySnapshot;
+  topEmployees: ReportEmployeeSummary[];
+  topSites: ReportSiteSummary[];
+  incidents: ReportIncidentSummary[];
+  incidentCountTotal: number;
 };
 
 function formatMinutesLabel(totalMinutes: number) {
@@ -84,6 +141,17 @@ function formatLatency(value: number | null) {
   if (value == null) return "--";
   if (value < 1000) return `${value} ms`;
   return `${(value / 1000).toFixed(1)} s`;
+}
+
+function formatPercent(value: number) {
+  return `${Math.round(Math.max(0, value) * 100)}%`;
+}
+
+function getShiftWindowDate(days: number) {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 export default function HomeScreen() {
@@ -168,8 +236,22 @@ export default function HomeScreen() {
   const [isLoadingReportSites, setIsLoadingReportSites] = useState(false);
   const [isReportSiteModalOpen, setIsReportSiteModalOpen] = useState(false);
   const [isReportEmployeeModalOpen, setIsReportEmployeeModalOpen] = useState(false);
+  const [reportSummary, setReportSummary] = useState<ReportSummaryResponse | null>(null);
+  const [isLoadingReportSummary, setIsLoadingReportSummary] = useState(false);
+  const [reportSummaryError, setReportSummaryError] = useState<string | null>(null);
+  const [walletEligibility, setWalletEligibility] = useState<{
+    wallet_eligible: boolean;
+    contract_active: boolean;
+    documents_complete: boolean;
+    wallet_status: string;
+  } | null>(null);
+  const [isLoadingWalletEligibility, setIsLoadingWalletEligibility] = useState(false);
+  const [isAddingCarnetToWallet, setIsAddingCarnetToWallet] = useState(false);
   const [isCheckActionLocked, setIsCheckActionLocked] = useState(false);
   const [recentQueuedFeedback, setRecentQueuedFeedback] = useState(false);
+  const [nextScheduledShift, setNextScheduledShift] = useState<ShiftRow | null>(null);
+  const [todayShift, setTodayShift] = useState<ShiftRow | null>(null);
+  const [isLoadingNextShift, setIsLoadingNextShift] = useState(false);
   const [opsSectionY, setOpsSectionY] = useState(0);
   const checkActionLockRef = useRef(false);
   const scrollRef = useRef<ScrollView | null>(null);
@@ -178,6 +260,43 @@ export default function HomeScreen() {
   const stopRealtimeGeofenceRef = useRef(stopRealtimeGeofence);
   const refreshEmployeeRef = useRef(refreshEmployee);
   const consumePendingSiteChangesRef = useRef(consumePendingSiteChanges);
+  const loadNextScheduledShift = useCallback(async () => {
+    if (!user?.id) {
+      setNextScheduledShift(null);
+      setTodayShift(null);
+      return;
+    }
+
+    setIsLoadingNextShift(true);
+    try {
+      const { data, error } = await supabase
+        .from("employee_shifts")
+        .select(
+          "id, shift_date, start_time, end_time, break_minutes, notes, status, site_id, sites(name)",
+        )
+        .eq("employee_id", user.id)
+        .not("published_at", "is", null)
+        .gte("shift_date", getShiftWindowDate(0))
+        .lte("shift_date", getShiftWindowDate(30))
+        .order("shift_date", { ascending: true })
+        .order("start_time", { ascending: true })
+        .limit(8);
+
+      if (error) throw error;
+      const rows = (data ?? []) as ShiftRow[];
+      const todayIso = getShiftWindowDate(0);
+      const today = rows.find((row) => row.shift_date === todayIso) ?? null;
+      const upcoming = rows.find((row) => isUpcomingShift(row));
+      setTodayShift(today);
+      setNextScheduledShift(upcoming ?? null);
+    } catch (error) {
+      console.error("[HOME] Error loading next shift:", error);
+      setNextScheduledShift(null);
+      setTodayShift(null);
+    } finally {
+      setIsLoadingNextShift(false);
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     refreshGeofenceRef.current = refreshGeofence;
@@ -307,6 +426,12 @@ export default function HomeScreen() {
   const notificationsPromptAttemptedForUserRef = useRef<string | null>(null);
   const notificationsPromptInFlightRef = useRef(false);
 
+  type NotificationPermissionStatus = "granted" | "denied" | "undetermined" | "unknown";
+  const [notificationPermissionStatus, setNotificationPermissionStatus] =
+    useState<NotificationPermissionStatus>("unknown");
+  const [notificationCanAskAgain, setNotificationCanAskAgain] = useState<boolean | null>(null);
+  const [notificationPromptLoading, setNotificationPromptLoading] = useState(false);
+
   useEffect(() => {
     if (user?.id !== lastUserIdRef.current) {
       initialLoadDoneRef.current = false;
@@ -418,6 +543,8 @@ export default function HomeScreen() {
   const siteRefreshInFlightRef = useRef(false);
   useFocusEffect(
     useCallback(() => {
+      void loadNextScheduledShift();
+
       if (user && hasPendingSiteChanges && !siteRefreshInFlightRef.current) {
         siteRefreshInFlightRef.current = true;
         void (async () => {
@@ -438,7 +565,7 @@ export default function HomeScreen() {
         realtimeStartedRef.current = false;
         stopRealtimeGeofenceRef.current();
       };
-    }, [user, hasPendingSiteChanges]),
+    }, [user, hasPendingSiteChanges, loadNextScheduledShift]),
   );
 
   useEffect(() => {
@@ -485,6 +612,93 @@ export default function HomeScreen() {
       console.warn("[HOME] Push token sync failed:", err);
     }
   }, [user?.id]);
+
+  const refreshNotificationPermission = useCallback(async () => {
+    try {
+      const perm = await Notifications.getPermissionsAsync();
+      const status = (perm.status === "granted"
+        ? "granted"
+        : perm.status === "denied"
+          ? "denied"
+          : perm.status === "undetermined"
+            ? "undetermined"
+            : "unknown") as NotificationPermissionStatus;
+      setNotificationPermissionStatus(status);
+      setNotificationCanAskAgain(
+        typeof perm.canAskAgain === "boolean" ? perm.canAskAgain : null,
+      );
+    } catch {
+      setNotificationPermissionStatus("unknown");
+      setNotificationCanAskAgain(null);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshNotificationPermission();
+    }, [refreshNotificationPermission]),
+  );
+
+  const requestNotificationPermissionOrOpenSettings = useCallback(async () => {
+    setNotificationPromptLoading(true);
+    try {
+      const current = await Notifications.getPermissionsAsync();
+      const status = (current.status === "granted"
+        ? "granted"
+        : current.status === "denied"
+          ? "denied"
+          : current.status === "undetermined"
+            ? "undetermined"
+            : "unknown") as NotificationPermissionStatus;
+      const canAsk =
+        typeof current.canAskAgain === "boolean" ? current.canAskAgain : null;
+
+      if (status === "granted") {
+        await syncPushToken();
+        await refreshNotificationPermission();
+        return;
+      }
+
+      if (status === "denied" && canAsk === false) {
+        Alert.alert(
+          "Notificaciones desactivadas",
+          "Para recibir avisos de ANIMA activa las notificaciones en Ajustes del dispositivo.",
+          [
+            { text: "Cerrar", style: "cancel" },
+            { text: "Abrir ajustes", onPress: () => void Linking.openSettings() },
+          ],
+        );
+        await refreshNotificationPermission();
+        return;
+      }
+
+      const { status: asked } = await Notifications.requestPermissionsAsync();
+      await refreshNotificationPermission();
+      if (asked === "granted") {
+        await syncPushToken();
+        Alert.alert("Listo", "Ya recibirás avisos de ANIMA.");
+      } else if (asked === "denied") {
+        const again = await Notifications.getPermissionsAsync();
+        const canAskAgain =
+          typeof again.canAskAgain === "boolean" ? again.canAskAgain : null;
+        if (canAskAgain === false) {
+          Alert.alert(
+            "Notificaciones desactivadas",
+            "Para recibir avisos activa las notificaciones en Ajustes.",
+            [
+              { text: "Cerrar", style: "cancel" },
+              { text: "Abrir ajustes", onPress: () => void Linking.openSettings() },
+            ],
+          );
+        }
+      }
+    } catch (err) {
+      console.warn("[HOME] Notification permission request failed:", err);
+      Alert.alert("Error", "No se pudo solicitar el permiso. Prueba desde Ajustes de la app.");
+    } finally {
+      setNotificationPromptLoading(false);
+    }
+  }, [syncPushToken, refreshNotificationPermission]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -733,6 +947,10 @@ export default function HomeScreen() {
     router.push("/history");
   };
 
+  const goToShifts = () => {
+    router.push("/shifts");
+  };
+
   const goToDocuments = () => {
     router.push("/documents");
   };
@@ -770,6 +988,12 @@ export default function HomeScreen() {
     role != null && !isGlobalReportRole && role !== "gerente";
   const canViewReports =
     isGlobalReportRole || canManagerTeamReports || canPersonalReports;
+  const nextShiftStatusMeta = nextScheduledShift
+    ? getShiftStatusMeta(nextScheduledShift.status)
+    : null;
+  const nextShiftDurationLabel = nextScheduledShift
+    ? formatShiftMinutes(getShiftDurationMinutes(nextScheduledShift))
+    : null;
 
   const selectedReportSite = useMemo(
     () =>
@@ -993,34 +1217,39 @@ export default function HomeScreen() {
     setReportEndDate(nextEnd);
   };
 
+  const buildAttendanceReportUrl = useCallback(
+    (format: "xlsx" | "json" = "xlsx") => {
+      const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+      if (!baseUrl) {
+        throw new Error("Missing Supabase URL");
+      }
+
+      const url = new URL("/functions/v1/attendance-report", baseUrl);
+      url.searchParams.set("start", reportStartDate.toISOString());
+      url.searchParams.set("end", reportEndDate.toISOString());
+      url.searchParams.set("format", format);
+      const deviceTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (deviceTimeZone) {
+        url.searchParams.set("tz", deviceTimeZone);
+      }
+      if (effectiveReportSiteId) {
+        url.searchParams.set("site_id", effectiveReportSiteId);
+      }
+      if (effectiveReportEmployeeId) {
+        url.searchParams.set("employee_id", effectiveReportEmployeeId);
+      }
+
+      return url;
+    },
+    [effectiveReportEmployeeId, effectiveReportSiteId, reportEndDate, reportStartDate],
+  );
+
   const createReportFile = async () => {
     if (!session?.access_token) {
       throw new Error("No hay sesión activa");
     }
 
-    const start = reportStartDate;
-    const end = reportEndDate;
-
-    const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-    if (!baseUrl) {
-      throw new Error("Missing Supabase URL");
-    }
-
-    const url = new URL("/functions/v1/attendance-report", baseUrl);
-    url.searchParams.set("start", start.toISOString());
-    url.searchParams.set("end", end.toISOString());
-    const deviceTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (deviceTimeZone) {
-      url.searchParams.set("tz", deviceTimeZone);
-    }
-    if (effectiveReportSiteId) {
-      url.searchParams.set("site_id", effectiveReportSiteId);
-    }
-    if (effectiveReportEmployeeId) {
-      url.searchParams.set("employee_id", effectiveReportEmployeeId);
-    }
-
-    const response = await fetch(url.toString(), {
+    const response = await fetch(buildAttendanceReportUrl("xlsx").toString(), {
       headers: {
         Authorization: `Bearer ${session.access_token}`,
       },
@@ -1041,6 +1270,137 @@ export default function HomeScreen() {
 
     return uri;
   };
+
+  const loadReportSummary = useCallback(async () => {
+    if (!canViewReports || !session?.access_token) {
+      setReportSummary(null);
+      setReportSummaryError(null);
+      return;
+    }
+
+    setIsLoadingReportSummary(true);
+    setReportSummaryError(null);
+    try {
+      const response = await fetch(buildAttendanceReportUrl("json").toString(), {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || "Failed to load report summary");
+      }
+
+      const payload = (await response.json()) as ReportSummaryResponse;
+      setReportSummary(payload);
+    } catch (error) {
+      console.error("[HOME] report summary error:", error);
+      setReportSummary(null);
+      setReportSummaryError("No se pudo cargar el resumen operativo.");
+    } finally {
+      setIsLoadingReportSummary(false);
+    }
+  }, [buildAttendanceReportUrl, canViewReports, session?.access_token]);
+
+  useEffect(() => {
+    loadReportSummary();
+  }, [loadReportSummary]);
+
+  const loadWalletEligibility = useCallback(async () => {
+    if (!user?.id) {
+      setWalletEligibility(null);
+      return;
+    }
+    setIsLoadingWalletEligibility(true);
+    try {
+      const { data, error } = await supabase.rpc("employee_wallet_eligibility", {
+        p_employee_id: user.id,
+      });
+      if (error) {
+        console.warn("[HOME] employee_wallet_eligibility error:", error);
+        setWalletEligibility(null);
+        return;
+      }
+      const row = Array.isArray(data) ? data[0] : data;
+      if (row && typeof row === "object" && "wallet_eligible" in row) {
+        setWalletEligibility({
+          wallet_eligible: Boolean(row.wallet_eligible),
+          contract_active: Boolean(row.contract_active),
+          documents_complete: Boolean(row.documents_complete),
+          wallet_status: String(row.wallet_status ?? ""),
+        });
+      } else {
+        setWalletEligibility(null);
+      }
+    } catch (e) {
+      console.warn("[HOME] loadWalletEligibility error:", e);
+      setWalletEligibility(null);
+    } finally {
+      setIsLoadingWalletEligibility(false);
+    }
+  }, [user?.id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.id) void loadWalletEligibility();
+    }, [user?.id, loadWalletEligibility]),
+  );
+
+  // Base para el carnet laboral: siempre el Supabase de ANIMA (no vento-pass).
+  // Para Apple puedes sobrescribir con EXPO_PUBLIC_EMPLOYEE_APPLE_PASS_BASE si tienes otro servidor de .pkpass.
+  const walletBaseUrl =
+    (typeof process !== "undefined" && process.env?.EXPO_PUBLIC_EMPLOYEE_APPLE_PASS_BASE) ||
+    process.env.EXPO_PUBLIC_SUPABASE_URL;
+
+  const handleAddCarnetToWallet = useCallback(async () => {
+    if (!session?.access_token || !user?.id || isAddingCarnetToWallet) return;
+    const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+    if (!baseUrl) {
+      Alert.alert("Error", "Configuración de la app incompleta.");
+      return;
+    }
+    setIsAddingCarnetToWallet(true);
+    try {
+      if (Platform.OS === "android") {
+        const url = new URL("/functions/v1/employee-wallet-pass", baseUrl);
+        const res = await fetch(url.toString(), {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({}),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || "No se pudo generar el pase");
+        }
+        const json = (await res.json()) as { saveUrl?: string };
+        const saveUrl = json?.saveUrl;
+        if (saveUrl) {
+          await Linking.openURL(saveUrl);
+        } else {
+          throw new Error("No se recibió enlace para agregar a Wallet");
+        }
+      } else {
+        const isCustomAppleBase = Boolean(
+          typeof process !== "undefined" && process.env?.EXPO_PUBLIC_EMPLOYEE_APPLE_PASS_BASE,
+        );
+        const passPath = isCustomAppleBase ? "/api/employee-apple-pass" : "/functions/v1/employee-apple-pass";
+        const passUrl = walletBaseUrl
+          ? `${walletBaseUrl.replace(/\/$/, "")}${passPath}?token=${encodeURIComponent(session.access_token)}`
+          : `${baseUrl}${passPath}?token=${encodeURIComponent(session.access_token)}`;
+        await Linking.openURL(passUrl);
+        await supabase.rpc("employee_wallet_mark_issued", { p_employee_id: user.id });
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Error al agregar el carnet";
+      Alert.alert("Error", msg);
+    } finally {
+      setIsAddingCarnetToWallet(false);
+    }
+  }, [session?.access_token, user?.id, isAddingCarnetToWallet]);
 
   const handleDownloadReport = async () => {
     if (isExporting) return;
@@ -1129,16 +1489,61 @@ export default function HomeScreen() {
     await selectSiteForCheckIn(siteId);
   };
 
-  const candidateSites =
-    geofenceState.candidateSites && geofenceState.candidateSites.length > 0
-      ? geofenceState.candidateSites
-      : employeeSites.map((site) => ({
-          id: site.siteId,
-          name: site.siteName,
-          distanceMeters: 0,
-          effectiveRadiusMeters: site.radiusMeters ?? 0,
-          requiresGeolocation: site.latitude != null && site.longitude != null,
-        }));
+  const candidateSites = useMemo(() => {
+    const baseLocation = geofenceState.location;
+
+    const fallbackSites = employeeSites.map((site) => {
+      const hasCoordinates = site.latitude != null && site.longitude != null;
+      const distanceMeters =
+        baseLocation && hasCoordinates
+          ? Math.round(
+              calculateDistance(
+                baseLocation.latitude,
+                baseLocation.longitude,
+                site.latitude as number,
+                site.longitude as number
+              )
+            )
+          : null;
+
+      return {
+        id: site.siteId,
+        name: site.siteName,
+        distanceMeters,
+        effectiveRadiusMeters: site.radiusMeters ?? 0,
+        requiresGeolocation: hasCoordinates,
+      };
+    });
+
+    if (!geofenceState.candidateSites || geofenceState.candidateSites.length === 0) {
+      return fallbackSites;
+    }
+
+    if (!baseLocation) return geofenceState.candidateSites;
+
+    return geofenceState.candidateSites.map((candidate) => {
+      if (candidate.distanceMeters != null || !candidate.requiresGeolocation) {
+        return candidate;
+      }
+
+      const site = employeeSites.find((item) => item.siteId === candidate.id);
+      if (!site || site.latitude == null || site.longitude == null) {
+        return candidate;
+      }
+
+      return {
+        ...candidate,
+        distanceMeters: Math.round(
+          calculateDistance(
+            baseLocation.latitude,
+            baseLocation.longitude,
+            site.latitude,
+            site.longitude
+          )
+        ),
+      };
+    });
+  }, [geofenceState.candidateSites, geofenceState.location, employeeSites]);
   const canChooseSite = employeeSites.length > 1;
   const topPadding = Math.max(20, insets.top + 12);
   const modalWidth = Math.min(windowWidth - 40, 420);
@@ -1626,7 +2031,121 @@ export default function HomeScreen() {
             setOpsSectionY(event.nativeEvent.layout.y);
           }}
         />
-        
+
+        {user && notificationPermissionStatus !== "granted" ? (
+          <TouchableOpacity
+            onPress={requestNotificationPermissionOrOpenSettings}
+            disabled={notificationPromptLoading}
+            activeOpacity={0.85}
+            style={{
+              backgroundColor: "white",
+              borderRadius: 14,
+              padding: 14,
+              borderWidth: 1,
+              borderColor: PALETTE.border,
+              marginBottom: 12,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            <View
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 12,
+                backgroundColor: RGBA.washRoseGlow,
+                borderWidth: 1,
+                borderColor: RGBA.borderPink,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Ionicons name="notifications-outline" size={22} color={PALETTE.accent} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={{ fontSize: 15, fontWeight: "800", color: PALETTE.text }}>
+                Activa las notificaciones
+              </Text>
+              <Text style={{ fontSize: 13, color: PALETTE.neutral, marginTop: 2 }}>
+                Para recibir avisos de turnos y del equipo
+              </Text>
+            </View>
+            <View
+              style={{
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                borderRadius: 10,
+                backgroundColor: notificationPromptLoading ? PALETTE.porcelain2 : RGBA.washRoseGlow,
+                borderWidth: 1,
+                borderColor: notificationPromptLoading ? PALETTE.border : RGBA.borderPink,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 13,
+                  fontWeight: "800",
+                  color: notificationPromptLoading ? PALETTE.neutral : PALETTE.accent,
+                }}
+              >
+                {notificationPromptLoading ? "..." : "Activar"}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        ) : null}
+
+        {(todayShift ?? nextScheduledShift) ? (
+          <TouchableOpacity
+            onPress={goToShifts}
+            activeOpacity={0.9}
+            style={{
+              backgroundColor: "white",
+              borderRadius: 14,
+              padding: 14,
+              borderWidth: 1,
+              borderColor: PALETTE.border,
+              marginBottom: 12,
+            }}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <View
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 12,
+                  backgroundColor: RGBA.washRoseGlow,
+                  borderWidth: 1,
+                  borderColor: RGBA.borderPink,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Ionicons name="calendar-outline" size={20} color={PALETTE.accent} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={{ fontSize: 13, fontWeight: "800", color: PALETTE.neutral }}>
+                  {todayShift ? "Tu turno hoy" : "Tu próximo turno"}
+                </Text>
+                <Text style={{ fontSize: 15, fontWeight: "800", color: PALETTE.text, marginTop: 2 }}>
+                  {formatShiftDateLabel((todayShift ?? nextScheduledShift)!.shift_date)} · {getShiftRangeLabel((todayShift ?? nextScheduledShift)!)}
+                </Text>
+                <Text style={{ fontSize: 13, color: PALETTE.neutral, marginTop: 2 }}>
+                  {getShiftSiteName((todayShift ?? nextScheduledShift)!.sites)}
+                </Text>
+                {todayShift ? (
+                  <Text style={{ fontSize: 12, color: PALETTE.neutral, marginTop: 4, fontStyle: "italic" }}>
+                    Según tu turno programado
+                  </Text>
+                ) : null}
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={PALETTE.neutral} />
+            </View>
+            <Text style={{ fontSize: 12, fontWeight: "700", color: PALETTE.accent, marginTop: 10 }}>
+              Ver mis turnos
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+
         {isOffline ? (
           <View
             style={{
@@ -2214,6 +2733,83 @@ export default function HomeScreen() {
           ) : null}
         </View>
 
+        {user && (
+          <View style={{ marginTop: 22 }}>
+            <View style={{ ...UI.card, padding: 16 }}>
+              <View pointerEvents="none" style={UI.cardTint} />
+              <Text style={{ fontSize: 13, color: COLORS.neutral }}>
+                Carnet laboral
+              </Text>
+              {isLoadingWalletEligibility ? (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 }}>
+                  <ActivityIndicator size="small" color={PALETTE.accent} />
+                  <Text style={{ fontSize: 14, color: PALETTE.text }}>Verificando elegibilidad…</Text>
+                </View>
+              ) : walletEligibility?.wallet_eligible ? (
+                <>
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontWeight: "800",
+                      color: PALETTE.text,
+                      marginTop: 6,
+                    }}
+                  >
+                    Puedes agregar tu carnet a la Wallet
+                  </Text>
+                  <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
+                    Añade tu credencial laboral a Google Wallet o Apple Wallet.
+                  </Text>
+                  <TouchableOpacity
+                    onPress={handleAddCarnetToWallet}
+                    disabled={isAddingCarnetToWallet}
+                    style={[
+                      {
+                        marginTop: 14,
+                        borderRadius: 20,
+                        paddingVertical: 14,
+                        paddingHorizontal: 20,
+                        alignItems: "center",
+                        backgroundColor: isAddingCarnetToWallet ? RGBA.ctaDisabled : PALETTE.accent,
+                        borderWidth: 0,
+                      },
+                    ]}
+                    activeOpacity={0.85}
+                  >
+                    {isAddingCarnetToWallet ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={{ fontSize: 15, fontWeight: "700", color: "#fff" }}>
+                        Agregar a Wallet
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </>
+              ) : walletEligibility != null ? (
+                <>
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontWeight: "800",
+                      color: PALETTE.text,
+                      marginTop: 6,
+                    }}
+                  >
+                    Carnet no disponible
+                  </Text>
+                  <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
+                    {!walletEligibility.contract_active
+                      ? "No tienes un contrato laboral vigente."
+                      : !walletEligibility.documents_complete
+                        ? "Faltan documentos requeridos por tu sede."
+                        : "No cumples los requisitos para emitir el carnet en este momento."}
+                  </Text>
+                </>
+              ) : null}
+            </View>
+          </View>
+        )}
+
         {canViewReports ? (
           <View style={{ marginTop: 22 }}>
             <View style={{ ...UI.card, padding: 16 }}>
@@ -2329,6 +2925,280 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               </View>
 
+              <View style={{ marginTop: 14 }}>
+                <Text style={{ fontSize: 12, color: COLORS.neutral }}>
+                  Resumen operativo
+                </Text>
+
+                {isLoadingReportSummary ? (
+                  <View
+                    style={{
+                      marginTop: 10,
+                      paddingVertical: 16,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <ActivityIndicator color={COLORS.accent} />
+                    <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 8 }}>
+                      Cargando métricas...
+                    </Text>
+                  </View>
+                ) : reportSummary ? (
+                  <>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        flexWrap: "wrap",
+                        gap: 8,
+                        marginTop: 10,
+                      }}
+                    >
+                      {[
+                        {
+                          label: "Programados",
+                          value: reportSummary.summary.scheduledShifts,
+                        },
+                        {
+                          label: "Asistidos",
+                          value: reportSummary.summary.attendedShifts,
+                        },
+                        {
+                          label: "Tardanzas",
+                          value: reportSummary.summary.lateCount,
+                        },
+                        {
+                          label: "No show",
+                          value: reportSummary.summary.noShowCount,
+                        },
+                        {
+                          label: "Sin cierre",
+                          value: reportSummary.summary.missingCloseCount,
+                        },
+                        {
+                          label: "Autocierres",
+                          value: reportSummary.summary.autoCloseCount,
+                        },
+                      ].map((item) => (
+                        <View
+                          key={item.label}
+                          style={{
+                            minWidth: "31%",
+                            flexGrow: 1,
+                            borderRadius: 14,
+                            borderWidth: 1,
+                            borderColor: PALETTE.border,
+                            backgroundColor: PALETTE.porcelain2,
+                            paddingVertical: 10,
+                            paddingHorizontal: 12,
+                          }}
+                        >
+                          <Text style={{ fontSize: 11, color: COLORS.neutral }}>
+                            {item.label}
+                          </Text>
+                          <Text
+                            style={{
+                              fontSize: 16,
+                              fontWeight: "900",
+                              color: COLORS.text,
+                              marginTop: 4,
+                            }}
+                          >
+                            {item.value}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        flexWrap: "wrap",
+                        gap: 8,
+                        marginTop: 10,
+                      }}
+                    >
+                      <View
+                        style={{
+                          flex: 1,
+                          minWidth: "48%",
+                          borderRadius: 14,
+                          borderWidth: 1,
+                          borderColor: PALETTE.border,
+                          backgroundColor: "rgba(226, 0, 106, 0.08)",
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                        }}
+                      >
+                        <Text style={{ fontSize: 11, color: COLORS.neutral }}>
+                          Horas programadas
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: 15,
+                            fontWeight: "900",
+                            color: COLORS.text,
+                            marginTop: 4,
+                          }}
+                        >
+                          {formatMinutesLabel(reportSummary.summary.scheduledMinutes)}
+                        </Text>
+                      </View>
+                      <View
+                        style={{
+                          flex: 1,
+                          minWidth: "48%",
+                          borderRadius: 14,
+                          borderWidth: 1,
+                          borderColor: PALETTE.border,
+                          backgroundColor: "rgba(226, 0, 106, 0.08)",
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                        }}
+                      >
+                        <Text style={{ fontSize: 11, color: COLORS.neutral }}>
+                          Horas netas reales
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: 15,
+                            fontWeight: "900",
+                            color: COLORS.text,
+                            marginTop: 4,
+                          }}
+                        >
+                          {formatMinutesLabel(reportSummary.summary.netMinutes)}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        gap: 8,
+                        marginTop: 10,
+                      }}
+                    >
+                      <View
+                        style={{
+                          flex: 1,
+                          borderRadius: 14,
+                          borderWidth: 1,
+                          borderColor: PALETTE.border,
+                          backgroundColor: COLORS.white,
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                        }}
+                      >
+                        <Text style={{ fontSize: 11, color: COLORS.neutral }}>
+                          Asistencia
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: 15,
+                            fontWeight: "900",
+                            color: COLORS.text,
+                            marginTop: 4,
+                          }}
+                        >
+                          {formatPercent(reportSummary.summary.attendanceRate)}
+                        </Text>
+                      </View>
+                      <View
+                        style={{
+                          flex: 1,
+                          borderRadius: 14,
+                          borderWidth: 1,
+                          borderColor: PALETTE.border,
+                          backgroundColor: COLORS.white,
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                        }}
+                      >
+                        <Text style={{ fontSize: 11, color: COLORS.neutral }}>
+                          Puntualidad
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: 15,
+                            fontWeight: "900",
+                            color: COLORS.text,
+                            marginTop: 4,
+                          }}
+                        >
+                          {formatPercent(reportSummary.summary.punctualityRate)}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {reportSummary.topEmployees.length > 0 ? (
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={{ fontSize: 12, fontWeight: "800", color: COLORS.text }}>
+                          Trabajadores con más incidencias
+                        </Text>
+                        <View style={{ marginTop: 8, gap: 6 }}>
+                          {reportSummary.topEmployees.slice(0, 3).map((item) => (
+                            <View
+                              key={item.employeeName}
+                              style={{
+                                borderRadius: 12,
+                                backgroundColor: COLORS.white,
+                                borderWidth: 1,
+                                borderColor: PALETTE.border,
+                                paddingVertical: 10,
+                                paddingHorizontal: 12,
+                              }}
+                            >
+                              <Text style={{ fontSize: 12, fontWeight: "800", color: COLORS.text }}>
+                                {item.employeeName}
+                              </Text>
+                              <Text style={{ fontSize: 11, color: COLORS.neutral, marginTop: 4 }}>
+                                {item.incidentCount} incidencias · {item.lateCount} tardanzas ·{" "}
+                                {item.noShowCount} no show · {item.openCount} abiertos
+                              </Text>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    ) : null}
+
+                    {reportSummary.incidents.length > 0 ? (
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={{ fontSize: 12, fontWeight: "800", color: COLORS.text }}>
+                          Alertas recientes
+                        </Text>
+                        <View style={{ marginTop: 8, gap: 6 }}>
+                          {reportSummary.incidents.slice(0, 3).map((item, index) => (
+                            <View
+                              key={`${item.category}-${item.employeeName}-${index}`}
+                              style={{
+                                borderRadius: 12,
+                                backgroundColor: COLORS.white,
+                                borderWidth: 1,
+                                borderColor: PALETTE.border,
+                                paddingVertical: 10,
+                                paddingHorizontal: 12,
+                              }}
+                            >
+                              <Text style={{ fontSize: 12, fontWeight: "800", color: COLORS.text }}>
+                                {item.category} · {item.employeeName}
+                              </Text>
+                              <Text style={{ fontSize: 11, color: COLORS.neutral, marginTop: 4 }}>
+                                {item.detail}
+                              </Text>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    ) : null}
+                  </>
+                ) : reportSummaryError ? (
+                  <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 10 }}>
+                    {reportSummaryError}
+                  </Text>
+                ) : null}
+              </View>
+
               <View style={{ flexDirection: "row", gap: 12, marginTop: 14 }}>
                 <TouchableOpacity
                   onPress={handleDownloadReport}
@@ -2392,7 +3262,210 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        
+        <View style={{ marginTop: 20 }}>
+          <View
+            style={{
+              backgroundColor: COLORS.white,
+              borderRadius: 20,
+              padding: 18,
+              borderWidth: 1,
+              borderColor: COLORS.border,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+              }}
+            >
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    fontSize: 12,
+                    fontWeight: "800",
+                    letterSpacing: 0.4,
+                    color: PALETTE.accent,
+                  }}
+                >
+                  MIS TURNOS
+                </Text>
+                <Text
+                  style={{
+                    fontSize: 18,
+                    fontWeight: "900",
+                    color: COLORS.text,
+                    marginTop: 8,
+                  }}
+                >
+                  {nextScheduledShift ? "Tu próximo horario" : "Horario pendiente"}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                onPress={goToShifts}
+                style={{
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                  borderRadius: 14,
+                  backgroundColor: PALETTE.accent,
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: "800", color: COLORS.white }}>
+                  Ver todo
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {isCheckedIn && todayShift ? (
+              <View
+                style={{
+                  marginTop: 14,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 8,
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  borderRadius: 12,
+                  backgroundColor:
+                    attendanceState.currentSiteId === todayShift.site_id
+                      ? "rgba(16, 185, 129, 0.12)"
+                      : COLORS.porcelainAlt,
+                  borderWidth: 1,
+                  borderColor:
+                    attendanceState.currentSiteId === todayShift.site_id
+                      ? "#10B981"
+                      : COLORS.border,
+                }}
+              >
+                <Ionicons
+                  name="checkmark-circle"
+                  size={18}
+                  color={
+                    attendanceState.currentSiteId === todayShift.site_id
+                      ? "#10B981"
+                      : COLORS.neutral
+                  }
+                />
+                <Text
+                  style={{
+                    fontSize: 13,
+                    fontWeight: "700",
+                    color: COLORS.text,
+                    flex: 1,
+                  }}
+                >
+                  {attendanceState.currentSiteId === todayShift.site_id
+                    ? "Dentro de tu turno de hoy"
+                    : `Turno de hoy: ${getShiftSiteName(todayShift.sites)} (${getShiftRangeLabel(todayShift)}). Check-in registrado.`}
+                </Text>
+              </View>
+            ) : null}
+            {isLoadingNextShift ? (
+              <View style={{ paddingVertical: 18, alignItems: "center" }}>
+                <ActivityIndicator color={PALETTE.accent} />
+                <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 10 }}>
+                  Consultando turnos...
+                </Text>
+              </View>
+            ) : nextScheduledShift ? (
+              <>
+                <Text
+                  style={{
+                    fontSize: 15,
+                    fontWeight: "800",
+                    color: COLORS.text,
+                    marginTop: 14,
+                  }}
+                >
+                  {formatShiftDateLabel(nextScheduledShift.shift_date)}
+                </Text>
+                <Text style={{ fontSize: 13, color: COLORS.neutral, marginTop: 6 }}>
+                  {getShiftSiteName(nextScheduledShift.sites)}
+                </Text>
+
+                <View style={{ flexDirection: "row", gap: 12, marginTop: 14 }}>
+                  <View
+                    style={{
+                      flex: 1,
+                      borderRadius: 16,
+                      padding: 12,
+                      backgroundColor: COLORS.porcelainAlt,
+                      borderWidth: 1,
+                      borderColor: COLORS.border,
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, color: COLORS.neutral }}>Horario</Text>
+                    <Text
+                      style={{
+                        fontSize: 15,
+                        fontWeight: "800",
+                        color: COLORS.text,
+                        marginTop: 5,
+                      }}
+                    >
+                      {getShiftRangeLabel(nextScheduledShift)}
+                    </Text>
+                  </View>
+
+                  <View
+                    style={{
+                      flex: 1,
+                      borderRadius: 16,
+                      padding: 12,
+                      backgroundColor: COLORS.porcelainAlt,
+                      borderWidth: 1,
+                      borderColor: COLORS.border,
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, color: COLORS.neutral }}>Duración neta</Text>
+                    <Text
+                      style={{
+                        fontSize: 15,
+                        fontWeight: "800",
+                        color: COLORS.text,
+                        marginTop: 5,
+                      }}
+                    >
+                      {nextShiftDurationLabel}
+                    </Text>
+                  </View>
+                </View>
+
+                {nextShiftStatusMeta ? (
+                  <View
+                    style={{
+                      alignSelf: "flex-start",
+                      marginTop: 14,
+                      borderRadius: 999,
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      backgroundColor: nextShiftStatusMeta.bg,
+                      borderWidth: 1,
+                      borderColor: nextShiftStatusMeta.border,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        fontWeight: "800",
+                        color: nextShiftStatusMeta.text,
+                      }}
+                    >
+                      {nextShiftStatusMeta.label}
+                    </Text>
+                  </View>
+                ) : null}
+              </>
+            ) : (
+              <Text style={{ fontSize: 13, color: COLORS.neutral, marginTop: 14, lineHeight: 19 }}>
+                Aún no tienes turnos próximos cargados. Cuando publiquen el horario aparecerá aquí.
+              </Text>
+            )}
+          </View>
+        </View>
+
         <View style={{ marginTop: 20 }}>
           <Text
             style={{
@@ -2607,4 +3680,3 @@ export default function HomeScreen() {
     </View>
   );
 }
-

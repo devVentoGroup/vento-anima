@@ -14,16 +14,126 @@ const GLOBAL_MANAGER_ROLE = "gerente_general"
 const MANAGER_ROLE = "gerente"
 const MANAGEMENT_ROLES = new Set([OWNER_ROLE, GLOBAL_MANAGER_ROLE, MANAGER_ROLE])
 
+function buildJsonResponse(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  })
+}
+
+async function sha256Hex(value: string) {
+  const bytes = new TextEncoder().encode(value)
+  const hashBuffer = await crypto.subtle.digest("SHA-256", bytes)
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+}
+
+async function getLatestInvitation(
+  supabase: ReturnType<typeof createClient>,
+  email: string,
+  siteId: string,
+) {
+  const { data } = await supabase
+    .from("staff_invitations")
+    .select("id, status, resend_count")
+    .eq("email", email)
+    .or(`site_id.eq.${siteId},staff_site_id.eq.${siteId}`)
+    .order("created_at", { ascending: false })
+    .limit(1)
+
+  return Array.isArray(data) ? data[0] ?? null : null
+}
+
+async function persistInvitationRecord(
+  supabase: ReturnType<typeof createClient>,
+  params: {
+    email: string
+    fullName: string | null
+    role: string
+    siteId: string
+    invitedBy: string
+    status:
+      | "sent"
+      | "linked_existing_user"
+      | "accepted"
+      | "expired"
+      | "cancelled"
+      | "failed"
+    authUserId?: string | null
+    employeeId?: string | null
+    inviteTokenHash?: string | null
+    lastSentAt?: string | null
+    expiredAt?: string | null
+    notes?: string | null
+    metadata?: Record<string, unknown>
+    incrementResend?: boolean
+  },
+) {
+  const existing = await getLatestInvitation(supabase, params.email, params.siteId)
+  const now = new Date().toISOString()
+  const resendCount =
+    params.incrementResend && existing
+      ? Number(existing.resend_count ?? 0) + 1
+      : Number(existing?.resend_count ?? 0)
+
+  const payload = {
+    email: params.email,
+    full_name: params.fullName,
+    staff_role: params.role,
+    role_code: params.role,
+    staff_site_id: params.siteId,
+    site_id: params.siteId,
+    status: params.status,
+    invited_by: params.invitedBy,
+    created_by: params.invitedBy,
+    invited_at: now,
+    last_sent_at: params.lastSentAt ?? null,
+    expired_at: params.expiredAt ?? null,
+    expires_at: params.expiredAt ?? null,
+    resend_count: resendCount,
+    delivery_channel: "email",
+    auth_user_id: params.authUserId ?? null,
+    employee_id: params.employeeId ?? null,
+    invite_token_hash: params.inviteTokenHash ?? null,
+    notes: params.notes ?? null,
+    metadata: params.metadata ?? {},
+    source_app: "anima",
+    updated_at: now,
+  }
+
+  if (existing?.id && existing.status !== "accepted" && existing.status !== "cancelled") {
+    const { data, error } = await supabase
+      .from("staff_invitations")
+      .update(payload)
+      .eq("id", existing.id)
+      .select("id")
+      .single()
+
+    if (error) throw error
+    return data?.id ?? existing.id
+  }
+
+  const { data, error } = await supabase
+    .from("staff_invitations")
+    .insert({
+      token: params.inviteTokenHash ?? `legacy:${crypto.randomUUID()}`,
+      ...payload,
+    })
+    .select("id")
+    .single()
+
+  if (error) throw error
+  return data?.id ?? null
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders })
   }
 
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return buildJsonResponse({ error: "Method not allowed" }, 405)
   }
 
   const supabaseUrl =
@@ -31,19 +141,13 @@ serve(async (req) => {
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
 
   if (!supabaseUrl || !serviceKey) {
-    return new Response(JSON.stringify({ error: "Missing Supabase config" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return buildJsonResponse({ error: "Missing Supabase config" }, 500)
   }
 
   const authHeader = req.headers.get("Authorization") ?? ""
   const token = authHeader.replace("Bearer ", "")
   if (!token) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return buildJsonResponse({ error: "Unauthorized" }, 401)
   }
 
   const supabase = createClient(supabaseUrl, serviceKey, {
@@ -52,10 +156,7 @@ serve(async (req) => {
 
   const { data: userData, error: userError } = await supabase.auth.getUser(token)
   if (userError || !userData?.user) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), {
-      status: 401,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return buildJsonResponse({ error: "Unauthorized" }, 401)
   }
 
   const { data: employee } = await supabase
@@ -65,10 +166,7 @@ serve(async (req) => {
     .maybeSingle()
 
   if (!employee || !MANAGEMENT_ROLES.has(employee.role)) {
-    return new Response(JSON.stringify({ error: "Forbidden" }), {
-      status: 403,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return buildJsonResponse({ error: "Forbidden" }, 403)
   }
 
   let payload: {
@@ -77,26 +175,35 @@ serve(async (req) => {
     role?: string
     site_id?: string
     expires_days?: number
+    expires_at?: string
   } = {}
 
   try {
     payload = await req.json()
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return buildJsonResponse({ error: "Invalid JSON" }, 400)
   }
 
-  const email = payload.email?.trim()
+  const email = payload.email?.trim().toLowerCase()
   const role = payload.role?.trim()
   const siteId = payload.site_id?.trim()
+  const expiresDays = Math.max(1, Math.min(30, Number(payload.expires_days ?? 7)))
+
+  let expiredAt: string
+  const expiresAtRaw = payload.expires_at?.trim()
+  if (expiresAtRaw) {
+    const parsed = new Date(expiresAtRaw)
+    if (!Number.isNaN(parsed.getTime())) {
+      expiredAt = parsed.toISOString()
+    } else {
+      expiredAt = new Date(Date.now() + expiresDays * 24 * 60 * 60 * 1000).toISOString()
+    }
+  } else {
+    expiredAt = new Date(Date.now() + expiresDays * 24 * 60 * 60 * 1000).toISOString()
+  }
 
   if (!email || !role || !siteId) {
-    return new Response(JSON.stringify({ error: "Missing fields" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return buildJsonResponse({ error: "Missing fields" }, 400)
   }
 
   const { data: roleRow } = await supabase
@@ -106,39 +213,24 @@ serve(async (req) => {
     .maybeSingle()
 
   if (!roleRow || roleRow.is_active === false) {
-    return new Response(JSON.stringify({ error: "Invalid role" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return buildJsonResponse({ error: "Invalid role" }, 400)
   }
 
   if (employee.role === GLOBAL_MANAGER_ROLE) {
     if (role === OWNER_ROLE || role === GLOBAL_MANAGER_ROLE) {
-      return new Response(JSON.stringify({ error: "Forbidden role" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      })
+      return buildJsonResponse({ error: "Forbidden role" }, 403)
     }
   } else if (employee.role === MANAGER_ROLE) {
     if (MANAGEMENT_ROLES.has(role)) {
-      return new Response(JSON.stringify({ error: "Forbidden role" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      })
+      return buildJsonResponse({ error: "Forbidden role" }, 403)
     }
     if (!employee.site_id || employee.site_id !== siteId) {
-      return new Response(JSON.stringify({ error: "Forbidden site" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      })
+      return buildJsonResponse({ error: "Forbidden site" }, 403)
     }
   }
 
   if (!/^\S+@\S+\.\S+$/.test(email)) {
-    return new Response(JSON.stringify({ error: "Invalid email" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return buildJsonResponse({ error: "Invalid email" }, 400)
   }
 
   const { data: site } = await supabase
@@ -148,10 +240,7 @@ serve(async (req) => {
     .maybeSingle()
 
   if (!site || site.is_active === false) {
-    return new Response(JSON.stringify({ error: "Invalid site" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return buildJsonResponse({ error: "Invalid site" }, 400)
   }
 
   const setPasswordWebUrl =
@@ -161,15 +250,12 @@ serve(async (req) => {
     ""
 
   if (!setPasswordWebUrl) {
-    return new Response(
-      JSON.stringify({
+    return buildJsonResponse(
+      {
         error:
           "Configura SET_PASSWORD_WEB_URL o EXPO_PUBLIC_ANIMA_AUTH_REDIRECT_URL (URL de la página web de crear contraseña, ej. https://tu-dominio.vercel.app/api/set-password).",
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
       },
+      500,
     )
   }
 
@@ -194,10 +280,22 @@ serve(async (req) => {
         raw,
       )
     if (!isAlreadyRegistered) {
-      return new Response(JSON.stringify({ error: raw }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      })
+      try {
+        await persistInvitationRecord(supabase, {
+          email,
+          fullName: payload.full_name?.trim() || null,
+          role,
+          siteId,
+          invitedBy: userData.user.id,
+          status: "failed",
+          expiredAt,
+          metadata: { source: "staff-invitations-create", error: raw },
+          notes: "Error generando link de invitación",
+        })
+      } catch (persistError) {
+        console.error("[staff-invitations-create] persist failed:", persistError)
+      }
+      return buildJsonResponse({ error: raw }, 400)
     }
 
     // El correo ya está en Auth (ej. se registró en Vento Pass). Agregar a employees sin invitar.
@@ -220,7 +318,7 @@ serve(async (req) => {
         page: 1,
         perPage: 500,
       })
-      const authUser = listData?.users?.find((u) => u.email === email)
+      const authUser = listData?.users?.find((u) => u.email?.toLowerCase() === email)
       if (authUser?.id) {
         existingUserId = authUser.id
         const meta = (authUser.user_metadata ?? {}) as Record<string, unknown>
@@ -230,15 +328,12 @@ serve(async (req) => {
       }
     }
     if (!existingUserId) {
-      return new Response(
-        JSON.stringify({
+      return buildJsonResponse(
+        {
           error:
             "Este correo ya está registrado pero no pudimos vincular la cuenta. Intenta más tarde o asígnalo desde Equipo.",
-        }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
         },
+        400,
       )
     }
 
@@ -255,10 +350,7 @@ serve(async (req) => {
       .eq("is_primary", true)
       .neq("site_id", siteId)
     if (clearPrimaryError) {
-      return new Response(JSON.stringify({ error: clearPrimaryError.message }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      })
+      return buildJsonResponse({ error: clearPrimaryError.message }, 500)
     }
 
     const { error: employeeError } = await supabase.from("employees").upsert(
@@ -275,10 +367,7 @@ serve(async (req) => {
       { onConflict: "id" },
     )
     if (employeeError) {
-      return new Response(JSON.stringify({ error: employeeError.message }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      })
+      return buildJsonResponse({ error: employeeError.message }, 400)
     }
 
     const { error: siteError } = await supabase.from("employee_sites").upsert(
@@ -291,24 +380,40 @@ serve(async (req) => {
       { onConflict: "employee_id,site_id" },
     )
     if (siteError) {
-      return new Response(JSON.stringify({ error: siteError.message }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      })
+      return buildJsonResponse({ error: siteError.message }, 500)
     }
 
-    return new Response(
-      JSON.stringify({
-        added_to_team: true,
+    let invitationId: string | null = null
+    try {
+      invitationId = await persistInvitationRecord(supabase, {
         email,
-        message:
-          "Ya tenía cuenta. Se agregó al equipo. Indícale que si solo entra con código (ej. en Vento Pass), puede usar «¿Olvidaste tu contraseña?» en el login de ANIMA para crear una contraseña.",
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
-    )
+        fullName,
+        role,
+        siteId,
+        invitedBy: userData.user.id,
+        status: "linked_existing_user",
+        authUserId: existingUserId,
+        employeeId: existingUserId,
+        expiredAt,
+        metadata: {
+          source: "staff-invitations-create",
+          existing_user_flow: true,
+        },
+        notes:
+          "Usuario existente en Auth agregado al equipo. Si solo usa OTP en otra app, debe crear contraseña desde recuperación.",
+      })
+    } catch (persistError) {
+      console.error("[staff-invitations-create] persist linked_existing_user failed:", persistError)
+    }
+
+    return buildJsonResponse({
+      added_to_team: true,
+      invitation_id: invitationId,
+      status: "linked_existing_user",
+      email,
+      message:
+        "Ya tenía cuenta. Se agregó al equipo. Indícale que si solo entra con código (ej. en Vento Pass), puede usar «¿Olvidaste tu contraseña?» en el login de ANIMA para crear una contraseña.",
+    })
   }
 
   const newUserId = linkData?.user?.id ?? null
@@ -331,12 +436,9 @@ serve(async (req) => {
   const emailActionLink = tokenHashLink || actionLink
 
   if (!newUserId || !emailActionLink) {
-    return new Response(
-      JSON.stringify({ error: "No se pudo generar el enlace de invitación" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
+    return buildJsonResponse(
+      { error: "No se pudo generar el enlace de invitación" },
+      500,
     )
   }
 
@@ -361,10 +463,7 @@ serve(async (req) => {
     { onConflict: "id" },
   )
   if (empErr) {
-    return new Response(JSON.stringify({ error: empErr.message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return buildJsonResponse({ error: empErr.message }, 500)
   }
 
   const { error: siteErr } = await supabase.from("employee_sites").upsert(
@@ -377,15 +476,41 @@ serve(async (req) => {
     { onConflict: "employee_id,site_id" },
   )
   if (siteErr) {
-    return new Response(JSON.stringify({ error: siteErr.message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    })
+    return buildJsonResponse({ error: siteErr.message }, 500)
   }
 
   const resendKey = Deno.env.get("RESEND_API_KEY")
   const fromEmail =
     Deno.env.get("ANIMA_INVITE_FROM_EMAIL") ?? "ANIMA <onboarding@resend.dev>"
+  const inviteTokenHash = hashedToken ? await sha256Hex(hashedToken) : null
+  let invitationId: string | null = null
+
+  try {
+    invitationId = await persistInvitationRecord(supabase, {
+      email,
+      fullName,
+      role,
+      siteId,
+      invitedBy: userData.user.id,
+      status: "sent",
+      authUserId: newUserId,
+      employeeId: newUserId,
+      inviteTokenHash,
+      lastSentAt: now,
+      expiredAt,
+      metadata: {
+        source: "staff-invitations-create",
+        verification_type: verificationType,
+      },
+      incrementResend: true,
+    })
+  } catch (persistError) {
+    console.error("[staff-invitations-create] persist sent failed:", persistError)
+    return buildJsonResponse(
+      { error: "No se pudo registrar la invitación operativa" },
+      500,
+    )
+  }
 
   if (resendKey) {
     // Template del correo: puedes editar texto y estilos; no quites ${emailActionLink}.
@@ -418,40 +543,72 @@ serve(async (req) => {
     })
     if (!res.ok) {
       const errText = await res.text()
-      return new Response(
-        JSON.stringify({
+      try {
+        await persistInvitationRecord(supabase, {
+          email,
+          fullName,
+          role,
+          siteId,
+          invitedBy: userData.user.id,
+          status: "failed",
+          authUserId: newUserId,
+          employeeId: newUserId,
+          inviteTokenHash,
+          expiredAt,
+          metadata: {
+            source: "staff-invitations-create",
+            email_send_error: errText.slice(0, 500),
+          },
+          notes: "Error enviando correo de invitación",
+        })
+      } catch (persistError) {
+        console.error("[staff-invitations-create] persist failed email error failed:", persistError)
+      }
+      return buildJsonResponse(
+        {
           error: "No se pudo enviar el correo",
           details: errText.slice(0, 200),
-        }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
         },
+        500,
       )
     }
   } else {
-    return new Response(
-      JSON.stringify({
+    try {
+      await persistInvitationRecord(supabase, {
+        email,
+        fullName,
+        role,
+        siteId,
+        invitedBy: userData.user.id,
+        status: "failed",
+        authUserId: newUserId,
+        employeeId: newUserId,
+        inviteTokenHash,
+        expiredAt,
+        metadata: {
+          source: "staff-invitations-create",
+          missing_secret: "RESEND_API_KEY",
+        },
+        notes: "No se pudo enviar el correo porque falta RESEND_API_KEY",
+      })
+    } catch (persistError) {
+      console.error("[staff-invitations-create] persist missing resend failed:", persistError)
+    }
+    return buildJsonResponse(
+      {
         error:
           "Configura RESEND_API_KEY (y opcionalmente ANIMA_INVITE_FROM_EMAIL) para enviar la invitación por correo. En Supabase: Secrets de la función.",
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
       },
+      500,
     )
   }
 
-  return new Response(
-    JSON.stringify({
-      invited: true,
-      email,
-      invite_user_id: newUserId,
-      set_password_url: setPasswordWebUrl || null,
-    }),
-    {
-      status: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    },
-  )
+  return buildJsonResponse({
+    invited: true,
+    invitation_id: invitationId,
+    status: "sent",
+    email,
+    invite_user_id: newUserId,
+    set_password_url: setPasswordWebUrl || null,
+  })
 })
