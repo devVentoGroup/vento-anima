@@ -18,6 +18,7 @@ import {
   CONTENT_HORIZONTAL_PADDING,
   CONTENT_MAX_WIDTH,
 } from "@/constants/layout";
+import ContactWorkerModal, { type WorkerOption } from "@/components/support/ContactWorkerModal";
 import SupportTicketModal from "@/components/support/SupportTicketModal";
 import { SUPPORT_UI } from "@/components/support/ui";
 import { supabase } from "@/lib/supabase";
@@ -160,14 +161,27 @@ function formatDateTime(value: string) {
   });
 }
 
+const MANAGEMENT_ROLES = new Set(["propietario", "gerente_general", "gerente"]);
+
 export default function SupportScreen() {
   const insets = useSafeAreaInsets();
   const { user, employee, selectedSiteId } = useAuth();
+  const role = employee?.role ?? null;
+  const canContactWorker = Boolean(role && MANAGEMENT_ROLES.has(role));
+  const managerSiteId = role === "gerente" ? (employee?.siteId ?? selectedSiteId ?? null) : null;
 
   const [isTicketOpen, setIsTicketOpen] = useState(false);
   const [ticketTitle, setTicketTitle] = useState("");
   const [ticketMessage, setTicketMessage] = useState("");
   const [isCreatingTicket, setIsCreatingTicket] = useState(false);
+
+  const [workersForContact, setWorkersForContact] = useState<WorkerOption[]>([]);
+  const [isLoadingWorkers, setIsLoadingWorkers] = useState(false);
+  const [contactModalVisible, setContactModalVisible] = useState(false);
+  const [contactMode, setContactMode] = useState<"aviso" | "conversacion">("aviso");
+  const [selectedWorker, setSelectedWorker] = useState<WorkerOption | null>(null);
+  const [contactMessage, setContactMessage] = useState("");
+  const [isSubmittingContact, setIsSubmittingContact] = useState(false);
 
   const [tickets, setTickets] = useState<TicketRow[]>([]);
   const [isLoadingTickets, setIsLoadingTickets] = useState(false);
@@ -185,6 +199,34 @@ export default function SupportScreen() {
     () => tickets.find((item) => item.id === selectedTicketId) ?? null,
     [tickets, selectedTicketId],
   );
+
+  const loadWorkersForContact = useCallback(async () => {
+    if (!user?.id || !canContactWorker) return;
+    if (role === "gerente" && !managerSiteId) {
+      setWorkersForContact([]);
+      return;
+    }
+    setIsLoadingWorkers(true);
+    try {
+      let query = supabase
+        .from("employees")
+        .select("id, full_name, alias")
+        .eq("is_active", true)
+        .order("full_name", { ascending: true });
+      if (role === "gerente" && managerSiteId) {
+        query = query.eq("site_id", managerSiteId);
+      }
+      const { data, error } = await query;
+      if (error) throw error;
+      setWorkersForContact((data as WorkerOption[]) ?? []);
+    } catch (err) {
+      console.error("[SUPPORT] Workers load error:", err);
+      Alert.alert("Soporte", "No se pudieron cargar los trabajadores.");
+      setWorkersForContact([]);
+    } finally {
+      setIsLoadingWorkers(false);
+    }
+  }, [user?.id, canContactWorker, role, managerSiteId]);
 
   const loadTickets = useCallback(async () => {
     if (!user?.id) return;
@@ -327,6 +369,67 @@ export default function SupportScreen() {
     }
   };
 
+  const submitContactWorker = async () => {
+    if (!user?.id || !selectedWorker) return;
+    if (contactMode === "aviso" && !contactMessage.trim()) {
+      Alert.alert("Soporte", "Escribe el aviso antes de enviar.");
+      return;
+    }
+    const displayName = selectedWorker.full_name ?? selectedWorker.alias ?? selectedWorker.id;
+    const title =
+      contactMode === "aviso"
+        ? `Aviso para ${displayName}`
+        : `Conversación con ${displayName}`;
+    const body = contactMessage.trim() || (contactMode === "conversacion" ? "(Conversación iniciada)" : "");
+
+    setIsSubmittingContact(true);
+    try {
+      const siteId = employee?.siteId ?? selectedSiteId ?? null;
+      const { data: ticketRow, error: ticketError } = await supabase
+        .from("support_tickets")
+        .insert({
+          created_by: user.id,
+          site_id: siteId,
+          target_employee_id: selectedWorker.id,
+          category: "attendance",
+          title,
+          description: body,
+          status: "open",
+        })
+        .select("id")
+        .single();
+
+      if (ticketError || !ticketRow?.id) throw ticketError ?? new Error("Ticket creation failed");
+
+      if (body) {
+        const { error: messageError } = await supabase.from("support_messages").insert({
+          ticket_id: ticketRow.id,
+          author_id: user.id,
+          body,
+        });
+        if (messageError) throw messageError;
+      }
+
+      setSelectedWorker(null);
+      setContactMessage("");
+      setContactModalVisible(false);
+      await loadTickets();
+      setSelectedTicketId(ticketRow.id);
+      await loadMessages(ticketRow.id);
+      Alert.alert(
+        "Soporte",
+        contactMode === "aviso"
+          ? "Aviso enviado. El trabajador lo verá en Soporte."
+          : "Conversación iniciada. El trabajador la verá en Soporte.",
+      );
+    } catch (err) {
+      console.error("[SUPPORT] Contact worker ticket error:", err);
+      Alert.alert("Soporte", "No se pudo crear el ticket.");
+    } finally {
+      setIsSubmittingContact(false);
+    }
+  };
+
   useFocusEffect(
     useCallback(() => {
       void loadTickets();
@@ -340,6 +443,12 @@ export default function SupportScreen() {
     }
     void loadMessages(selectedTicketId);
   }, [selectedTicketId, loadMessages]);
+
+  useEffect(() => {
+    if (contactModalVisible && canContactWorker) {
+      void loadWorkersForContact();
+    }
+  }, [contactModalVisible, canContactWorker, loadWorkersForContact]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -443,6 +552,65 @@ export default function SupportScreen() {
               </View>
             </View>
           </View>
+
+          {canContactWorker ? (
+            <View style={[UI.card, { padding: 14 }]}>
+              <Text style={styles.cardTitle}>Contactar a un trabajador</Text>
+              <Text style={styles.cardSubtitle}>
+                Envía un aviso o inicia una conversación con un trabajador. Lo verá en su Soporte.
+              </Text>
+              <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+                <TouchableOpacity
+                  onPress={() => {
+                    setContactMode("aviso");
+                    setSelectedWorker(null);
+                    setContactMessage("");
+                    setContactModalVisible(true);
+                  }}
+                  style={[
+                    UI.chip,
+                    {
+                      flex: 1,
+                      borderColor: COLORS.accent,
+                      backgroundColor: "rgba(226, 0, 106, 0.12)",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      paddingVertical: 12,
+                    },
+                  ]}
+                >
+                  <Ionicons name="megaphone-outline" size={16} color={COLORS.accent} />
+                  <Text style={{ fontWeight: "800", color: COLORS.accent }}>Enviar aviso</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    setContactMode("conversacion");
+                    setSelectedWorker(null);
+                    setContactMessage("");
+                    setContactModalVisible(true);
+                  }}
+                  style={[
+                    UI.chip,
+                    {
+                      flex: 1,
+                      borderColor: COLORS.accent,
+                      backgroundColor: "rgba(226, 0, 106, 0.12)",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      paddingVertical: 12,
+                    },
+                  ]}
+                >
+                  <Ionicons name="chatbubble-ellipses-outline" size={16} color={COLORS.accent} />
+                  <Text style={{ fontWeight: "800", color: COLORS.accent }}>Iniciar conversación</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
 
           <View style={[UI.card, { padding: 14 }]}>
             <Text style={styles.cardTitle}>Tickets</Text>
@@ -703,6 +871,24 @@ export default function SupportScreen() {
         onChangeMessage={setTicketMessage}
         onClose={() => setIsTicketOpen(false)}
         onSubmit={submitTicket}
+      />
+
+      <ContactWorkerModal
+        visible={contactModalVisible}
+        workers={workersForContact}
+        isLoadingWorkers={isLoadingWorkers}
+        selectedWorker={selectedWorker}
+        onSelectWorker={setSelectedWorker}
+        onClose={() => {
+          setContactModalVisible(false);
+          setSelectedWorker(null);
+          setContactMessage("");
+        }}
+        mode={contactMode}
+        message={contactMessage}
+        onChangeMessage={setContactMessage}
+        isSubmitting={isSubmittingContact}
+        onSubmit={submitContactWorker}
       />
     </View>
   );

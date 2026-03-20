@@ -18,6 +18,7 @@ const LOOKAHEAD_DAYS = 1
 
 type ShiftPolicyRow = {
   end_reminder_minutes_before_end: number | null
+  end_reminder_minutes_after_end: number | null
   auto_checkout_grace_minutes_after_end: number | null
   end_reminder_enabled: boolean | null
   scheduled_auto_checkout_enabled: boolean | null
@@ -323,7 +324,7 @@ serve(async (req) => {
   const { data: policyData, error: policyError } = await supabase
     .from("shift_policy")
     .select(
-      "end_reminder_minutes_before_end, auto_checkout_grace_minutes_after_end, end_reminder_enabled, scheduled_auto_checkout_enabled",
+      "end_reminder_minutes_before_end, end_reminder_minutes_after_end, auto_checkout_grace_minutes_after_end, end_reminder_enabled, scheduled_auto_checkout_enabled",
     )
     .limit(1)
     .maybeSingle<ShiftPolicyRow>()
@@ -345,6 +346,10 @@ serve(async (req) => {
     Number(policy?.auto_checkout_grace_minutes_after_end ?? DEFAULT_AUTO_CLOSE_GRACE_MINUTES) ||
       DEFAULT_AUTO_CLOSE_GRACE_MINUTES,
   )
+  const reminderAfterMinutes =
+    policy?.end_reminder_minutes_after_end != null
+      ? Math.max(0, Number(policy.end_reminder_minutes_after_end))
+      : null
   const reminderEnabled = policy?.end_reminder_enabled !== false
   const autoCloseEnabled = policy?.scheduled_auto_checkout_enabled !== false
 
@@ -455,6 +460,10 @@ serve(async (req) => {
     const scheduledEndMs = new Date(scheduledEndAt).getTime()
     const reminderAtMs = scheduledEndMs - reminderMinutes * 60000
     const autoCloseAtMs = scheduledEndMs + autoCloseGraceMinutes * 60000
+    const reminderWindowEndMs =
+      reminderAfterMinutes != null
+        ? Math.min(scheduledEndMs + reminderAfterMinutes * 60000, autoCloseAtMs)
+        : autoCloseAtMs
     const logsKey = `${shift.employee_id}|${shift.site_id}`
     const employeeLogs = logsByEmployeeSite.get(logsKey) ?? []
     const sessions = buildLogSessions(employeeLogs, nowIso)
@@ -465,7 +474,7 @@ serve(async (req) => {
       reminderEnabled &&
       isOpen &&
       now.getTime() >= reminderAtMs &&
-      now.getTime() < autoCloseAtMs &&
+      now.getTime() < reminderWindowEndMs &&
       !existingEventKeys.has(`${shift.id}|end_reminder_sent`)
     ) {
       const tokensForEmployee = tokensByEmployee.get(shift.employee_id) ?? []

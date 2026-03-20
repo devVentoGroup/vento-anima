@@ -13,7 +13,7 @@ module.exports = () => {
       name: APP_NAME,
       slug: "anima",
       scheme: APP_SCHEME,
-      version: "1.1.0",
+      version: "1.1.1",
       jsEngine: "hermes",
       orientation: "portrait",
       icon: "./assets/icon-padded.png",

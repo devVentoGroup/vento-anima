@@ -133,7 +133,7 @@ export default function ShiftsScreen() {
       let query = supabase
         .from("employee_shifts")
         .select(
-          "id, employee_id, shift_date, start_time, end_time, break_minutes, notes, status, site_id, sites(name), published_at, employees(full_name)",
+          "id, employee_id, shift_date, start_time, end_time, break_minutes, notes, status, site_id, sites(name), published_at, employees!employee_shifts_employee_id_fkey(full_name)",
         )
         .gte("shift_date", getDateOffset(-7))
         .lte("shift_date", getDateOffset(30))

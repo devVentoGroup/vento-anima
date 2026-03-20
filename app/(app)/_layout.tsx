@@ -38,6 +38,8 @@ export default function AppLayout() {
   }, [router])
   const canSeeTeam =
     role === "propietario" || role === "gerente_general" || role === "gerente"
+  const canSeeResumen =
+    role === "propietario" || role === "gerente_general" || role === "gerente"
   const androidBottomInset = Platform.OS === "android" ? Math.max(insets.bottom, 16) : 0
   const iosBottomInset = Platform.OS === "ios" ? Math.max(insets.bottom, 12) : 0
 
@@ -102,6 +104,22 @@ export default function AppLayout() {
               color={color}
             />
           ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="operativo"
+        options={{
+          title: "Resumen",
+          tabBarLabel: "Resumen",
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons
+              name={focused ? "stats-chart" : "stats-chart-outline"}
+              size={size ?? 22}
+              color={color}
+            />
+          ),
+          ...(canSeeResumen ? {} : { href: null }),
         }}
       />
 

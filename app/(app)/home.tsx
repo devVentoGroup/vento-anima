@@ -1303,9 +1303,6 @@ export default function HomeScreen() {
     }
   }, [buildAttendanceReportUrl, canViewReports, session?.access_token]);
 
-  useEffect(() => {
-    loadReportSummary();
-  }, [loadReportSummary]);
 
   const loadWalletEligibility = useCallback(async () => {
     if (!user?.id) {
@@ -1721,56 +1718,6 @@ export default function HomeScreen() {
         onSelectSite={handleSelectSite}
       />
 
-      <DateRangeModal
-        visible={isDateModalOpen}
-        modalWidth={modalWidth}
-        calendarTheme={calendarTheme}
-        calendarMonth={calendarMonth}
-        markedDates={markedDates}
-        draftStartDate={draftStartDate}
-        draftEndDate={draftEndDate}
-        surfaceStyle={UI.surface2}
-        onClose={() => setIsDateModalOpen(false)}
-        onApply={applyDraftRange}
-        onSelectDay={handleSelectRangeDay}
-        onMonthChange={handleCalendarMonthChange}
-        shiftCalendarMonth={shiftCalendarMonth}
-        toDateKey={toDateKey}
-        formatShortDate={formatShortDate}
-        formatMonthLabel={formatMonthLabel}
-      />
-
-      <ReportFilterModal
-        visible={isReportSiteModalOpen}
-        title="Seleccionar sede"
-        subtitle="Filtra el reporte por una sede específica o usa todas."
-        options={reportSites}
-        selectedId={reportSiteId}
-        includeAll
-        allLabel="Todas las sedes"
-        modalWidth={modalWidth}
-        onSelect={(id) => setReportSiteId(id)}
-        onClose={() => setIsReportSiteModalOpen(false)}
-      />
-
-      <ReportFilterModal
-        visible={isReportEmployeeModalOpen}
-        title="Seleccionar trabajador"
-        subtitle={
-          reportSiteId
-            ? "Mostrando solo trabajadores asignados a la sede filtrada."
-            : "Puedes seleccionar un trabajador específico o todos."
-        }
-        options={filteredReportEmployees}
-        selectedId={reportEmployeeId}
-        includeAll
-        allLabel="Todos los trabajadores"
-        modalWidth={modalWidth}
-        onSelect={(id) => setReportEmployeeId(id)}
-        onClose={() => setIsReportEmployeeModalOpen(false)}
-      />
-
-      
       <View
         style={{
           alignSelf: "center",
@@ -2734,533 +2681,67 @@ export default function HomeScreen() {
         </View>
 
         {user && (
-          <View style={{ marginTop: 22 }}>
-            <View style={{ ...UI.card, padding: 16 }}>
-              <View pointerEvents="none" style={UI.cardTint} />
-              <Text style={{ fontSize: 13, color: COLORS.neutral }}>
-                Carnet laboral
-              </Text>
-              {isLoadingWalletEligibility ? (
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 }}>
-                  <ActivityIndicator size="small" color={PALETTE.accent} />
-                  <Text style={{ fontSize: 14, color: PALETTE.text }}>Verificando elegibilidad…</Text>
+          <View style={{ marginTop: 18 }}>
+            <View
+              style={{
+                ...UI.card,
+                padding: 14,
+                borderWidth: 1,
+                borderColor: PALETTE.border,
+                backgroundColor: COLORS.white,
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+                <View style={{ flex: 1, minWidth: 120 }}>
+                  <Text style={{ fontSize: 12, color: COLORS.neutral }}>
+                    Carnet laboral
+                  </Text>
+                  {isLoadingWalletEligibility ? (
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}>
+                      <ActivityIndicator size="small" color={PALETTE.accent} />
+                      <Text style={{ fontSize: 13, color: COLORS.neutral }}>Verificando…</Text>
+                    </View>
+                  ) : walletEligibility?.wallet_eligible ? (
+                    <Text style={{ fontSize: 13, color: PALETTE.text, marginTop: 4 }}>
+                      Añade tu credencial a Wallet
+                    </Text>
+                  ) : walletEligibility != null ? (
+                    <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }} numberOfLines={2}>
+                      {!walletEligibility.contract_active
+                        ? "Contrato no vigente."
+                        : !walletEligibility.documents_complete
+                          ? "Faltan documentos requeridos."
+                          : "No disponible."}
+                    </Text>
+                  ) : null}
                 </View>
-              ) : walletEligibility?.wallet_eligible ? (
-                <>
-                  <Text
-                    style={{
-                      fontSize: 16,
-                      fontWeight: "800",
-                      color: PALETTE.text,
-                      marginTop: 6,
-                    }}
-                  >
-                    Puedes agregar tu carnet a la Wallet
-                  </Text>
-                  <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
-                    Añade tu credencial laboral a Google Wallet o Apple Wallet.
-                  </Text>
+                {walletEligibility?.wallet_eligible && (
                   <TouchableOpacity
                     onPress={handleAddCarnetToWallet}
                     disabled={isAddingCarnetToWallet}
-                    style={[
-                      {
-                        marginTop: 14,
-                        borderRadius: 20,
-                        paddingVertical: 14,
-                        paddingHorizontal: 20,
-                        alignItems: "center",
-                        backgroundColor: isAddingCarnetToWallet ? RGBA.ctaDisabled : PALETTE.accent,
-                        borderWidth: 0,
-                      },
-                    ]}
-                    activeOpacity={0.85}
+                    style={{
+                      paddingVertical: 8,
+                      paddingHorizontal: 14,
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: PALETTE.accent,
+                      backgroundColor: "transparent",
+                    }}
+                    activeOpacity={0.7}
                   >
                     {isAddingCarnetToWallet ? (
-                      <ActivityIndicator size="small" color="#fff" />
+                      <ActivityIndicator size="small" color={PALETTE.accent} />
                     ) : (
-                      <Text style={{ fontSize: 15, fontWeight: "700", color: "#fff" }}>
+                      <Text style={{ fontSize: 13, fontWeight: "600", color: PALETTE.accent }}>
                         Agregar a Wallet
                       </Text>
                     )}
                   </TouchableOpacity>
-                </>
-              ) : walletEligibility != null ? (
-                <>
-                  <Text
-                    style={{
-                      fontSize: 16,
-                      fontWeight: "800",
-                      color: PALETTE.text,
-                      marginTop: 6,
-                    }}
-                  >
-                    Carnet no disponible
-                  </Text>
-                  <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
-                    {!walletEligibility.contract_active
-                      ? "No tienes un contrato laboral vigente."
-                      : !walletEligibility.documents_complete
-                        ? "Faltan documentos requeridos por tu sede."
-                        : "No cumples los requisitos para emitir el carnet en este momento."}
-                  </Text>
-                </>
-              ) : null}
+                )}
+              </View>
             </View>
           </View>
         )}
-
-        {canViewReports ? (
-          <View style={{ marginTop: 22 }}>
-            <View style={{ ...UI.card, padding: 16 }}>
-              <View pointerEvents="none" style={UI.cardTint} />
-              <Text style={{ fontSize: 13, color: COLORS.neutral }}>
-                Reportes
-              </Text>
-              <Text
-                style={{
-                  fontSize: 16,
-                  fontWeight: "800",
-                  color: COLORS.text,
-                  marginTop: 6,
-                }}
-              >
-                {reportTitle}
-              </Text>
-              <Text
-                style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}
-              >
-                Alcance: {reportScopeLabel}
-              </Text>
-              {isGlobalReportRole ? (
-                <View style={{ marginTop: 10 }}>
-                  <Text style={{ fontSize: 12, color: COLORS.neutral }}>
-                    Filtros
-                  </Text>
-
-                  <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-                    <TouchableOpacity
-                      onPress={() => setIsReportSiteModalOpen(true)}
-                      style={{
-                        flex: 1,
-                        ...UI.pill,
-                        borderColor: reportSiteId ? COLORS.accent : PALETTE.border,
-                        backgroundColor: reportSiteId
-                          ? "rgba(226, 0, 106, 0.12)"
-                          : PALETTE.porcelain2,
-                      }}
-                    >
-                      <Text
-                        numberOfLines={1}
-                        style={{
-                          fontSize: 12,
-                          fontWeight: "800",
-                          color: reportSiteId ? COLORS.accent : COLORS.text,
-                          textAlign: "center",
-                        }}
-                      >
-                        {isLoadingReportSites
-                          ? "Cargando sedes..."
-                          : selectedReportSite?.label ?? "Todas las sedes"}
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={() => setIsReportEmployeeModalOpen(true)}
-                      disabled={isLoadingReportEmployees}
-                      style={{
-                        flex: 1,
-                        ...UI.pill,
-                        borderColor: reportEmployeeId ? COLORS.accent : PALETTE.border,
-                        backgroundColor: reportEmployeeId
-                          ? "rgba(226, 0, 106, 0.12)"
-                          : PALETTE.porcelain2,
-                        opacity: isLoadingReportEmployees ? 0.7 : 1,
-                      }}
-                    >
-                      <Text
-                        numberOfLines={1}
-                        style={{
-                          fontSize: 12,
-                          fontWeight: "800",
-                          color: reportEmployeeId ? COLORS.accent : COLORS.text,
-                          textAlign: "center",
-                        }}
-                      >
-                        {isLoadingReportEmployees
-                          ? "Cargando trabajadores..."
-                          : selectedReportEmployee?.label ?? "Todos los trabajadores"}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-
-                  <Text style={{ fontSize: 11, color: COLORS.neutral, marginTop: 8 }}>
-                    {reportSiteId
-                      ? `${filteredReportEmployees.length} trabajadores en la sede seleccionada`
-                      : `${reportEmployees.length} trabajadores disponibles`}
-                  </Text>
-                </View>
-              ) : null}
-              <View style={{ marginTop: 10 }}>
-                <Text style={{ fontSize: 12, color: COLORS.neutral }}>
-                  Periodo: {reportRangeLabel}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => setIsDateModalOpen(true)}
-                  style={{
-                    ...UI.btnGhostPink,
-                    alignSelf: "flex-start",
-                    marginTop: 8,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      fontWeight: "700",
-                      color: PALETTE.accent,
-                    }}
-                  >
-                    Cambiar rango
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={{ marginTop: 14 }}>
-                <Text style={{ fontSize: 12, color: COLORS.neutral }}>
-                  Resumen operativo
-                </Text>
-
-                {isLoadingReportSummary ? (
-                  <View
-                    style={{
-                      marginTop: 10,
-                      paddingVertical: 16,
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <ActivityIndicator color={COLORS.accent} />
-                    <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 8 }}>
-                      Cargando métricas...
-                    </Text>
-                  </View>
-                ) : reportSummary ? (
-                  <>
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        flexWrap: "wrap",
-                        gap: 8,
-                        marginTop: 10,
-                      }}
-                    >
-                      {[
-                        {
-                          label: "Programados",
-                          value: reportSummary.summary.scheduledShifts,
-                        },
-                        {
-                          label: "Asistidos",
-                          value: reportSummary.summary.attendedShifts,
-                        },
-                        {
-                          label: "Tardanzas",
-                          value: reportSummary.summary.lateCount,
-                        },
-                        {
-                          label: "No show",
-                          value: reportSummary.summary.noShowCount,
-                        },
-                        {
-                          label: "Sin cierre",
-                          value: reportSummary.summary.missingCloseCount,
-                        },
-                        {
-                          label: "Autocierres",
-                          value: reportSummary.summary.autoCloseCount,
-                        },
-                      ].map((item) => (
-                        <View
-                          key={item.label}
-                          style={{
-                            minWidth: "31%",
-                            flexGrow: 1,
-                            borderRadius: 14,
-                            borderWidth: 1,
-                            borderColor: PALETTE.border,
-                            backgroundColor: PALETTE.porcelain2,
-                            paddingVertical: 10,
-                            paddingHorizontal: 12,
-                          }}
-                        >
-                          <Text style={{ fontSize: 11, color: COLORS.neutral }}>
-                            {item.label}
-                          </Text>
-                          <Text
-                            style={{
-                              fontSize: 16,
-                              fontWeight: "900",
-                              color: COLORS.text,
-                              marginTop: 4,
-                            }}
-                          >
-                            {item.value}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        flexWrap: "wrap",
-                        gap: 8,
-                        marginTop: 10,
-                      }}
-                    >
-                      <View
-                        style={{
-                          flex: 1,
-                          minWidth: "48%",
-                          borderRadius: 14,
-                          borderWidth: 1,
-                          borderColor: PALETTE.border,
-                          backgroundColor: "rgba(226, 0, 106, 0.08)",
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                        }}
-                      >
-                        <Text style={{ fontSize: 11, color: COLORS.neutral }}>
-                          Horas programadas
-                        </Text>
-                        <Text
-                          style={{
-                            fontSize: 15,
-                            fontWeight: "900",
-                            color: COLORS.text,
-                            marginTop: 4,
-                          }}
-                        >
-                          {formatMinutesLabel(reportSummary.summary.scheduledMinutes)}
-                        </Text>
-                      </View>
-                      <View
-                        style={{
-                          flex: 1,
-                          minWidth: "48%",
-                          borderRadius: 14,
-                          borderWidth: 1,
-                          borderColor: PALETTE.border,
-                          backgroundColor: "rgba(226, 0, 106, 0.08)",
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                        }}
-                      >
-                        <Text style={{ fontSize: 11, color: COLORS.neutral }}>
-                          Horas netas reales
-                        </Text>
-                        <Text
-                          style={{
-                            fontSize: 15,
-                            fontWeight: "900",
-                            color: COLORS.text,
-                            marginTop: 4,
-                          }}
-                        >
-                          {formatMinutesLabel(reportSummary.summary.netMinutes)}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        gap: 8,
-                        marginTop: 10,
-                      }}
-                    >
-                      <View
-                        style={{
-                          flex: 1,
-                          borderRadius: 14,
-                          borderWidth: 1,
-                          borderColor: PALETTE.border,
-                          backgroundColor: COLORS.white,
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                        }}
-                      >
-                        <Text style={{ fontSize: 11, color: COLORS.neutral }}>
-                          Asistencia
-                        </Text>
-                        <Text
-                          style={{
-                            fontSize: 15,
-                            fontWeight: "900",
-                            color: COLORS.text,
-                            marginTop: 4,
-                          }}
-                        >
-                          {formatPercent(reportSummary.summary.attendanceRate)}
-                        </Text>
-                      </View>
-                      <View
-                        style={{
-                          flex: 1,
-                          borderRadius: 14,
-                          borderWidth: 1,
-                          borderColor: PALETTE.border,
-                          backgroundColor: COLORS.white,
-                          paddingVertical: 10,
-                          paddingHorizontal: 12,
-                        }}
-                      >
-                        <Text style={{ fontSize: 11, color: COLORS.neutral }}>
-                          Puntualidad
-                        </Text>
-                        <Text
-                          style={{
-                            fontSize: 15,
-                            fontWeight: "900",
-                            color: COLORS.text,
-                            marginTop: 4,
-                          }}
-                        >
-                          {formatPercent(reportSummary.summary.punctualityRate)}
-                        </Text>
-                      </View>
-                    </View>
-
-                    {reportSummary.topEmployees.length > 0 ? (
-                      <View style={{ marginTop: 12 }}>
-                        <Text style={{ fontSize: 12, fontWeight: "800", color: COLORS.text }}>
-                          Trabajadores con más incidencias
-                        </Text>
-                        <View style={{ marginTop: 8, gap: 6 }}>
-                          {reportSummary.topEmployees.slice(0, 3).map((item) => (
-                            <View
-                              key={item.employeeName}
-                              style={{
-                                borderRadius: 12,
-                                backgroundColor: COLORS.white,
-                                borderWidth: 1,
-                                borderColor: PALETTE.border,
-                                paddingVertical: 10,
-                                paddingHorizontal: 12,
-                              }}
-                            >
-                              <Text style={{ fontSize: 12, fontWeight: "800", color: COLORS.text }}>
-                                {item.employeeName}
-                              </Text>
-                              <Text style={{ fontSize: 11, color: COLORS.neutral, marginTop: 4 }}>
-                                {item.incidentCount} incidencias · {item.lateCount} tardanzas ·{" "}
-                                {item.noShowCount} no show · {item.openCount} abiertos
-                              </Text>
-                            </View>
-                          ))}
-                        </View>
-                      </View>
-                    ) : null}
-
-                    {reportSummary.incidents.length > 0 ? (
-                      <View style={{ marginTop: 12 }}>
-                        <Text style={{ fontSize: 12, fontWeight: "800", color: COLORS.text }}>
-                          Alertas recientes
-                        </Text>
-                        <View style={{ marginTop: 8, gap: 6 }}>
-                          {reportSummary.incidents.slice(0, 3).map((item, index) => (
-                            <View
-                              key={`${item.category}-${item.employeeName}-${index}`}
-                              style={{
-                                borderRadius: 12,
-                                backgroundColor: COLORS.white,
-                                borderWidth: 1,
-                                borderColor: PALETTE.border,
-                                paddingVertical: 10,
-                                paddingHorizontal: 12,
-                              }}
-                            >
-                              <Text style={{ fontSize: 12, fontWeight: "800", color: COLORS.text }}>
-                                {item.category} · {item.employeeName}
-                              </Text>
-                              <Text style={{ fontSize: 11, color: COLORS.neutral, marginTop: 4 }}>
-                                {item.detail}
-                              </Text>
-                            </View>
-                          ))}
-                        </View>
-                      </View>
-                    ) : null}
-                  </>
-                ) : reportSummaryError ? (
-                  <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 10 }}>
-                    {reportSummaryError}
-                  </Text>
-                ) : null}
-              </View>
-
-              <View style={{ flexDirection: "row", gap: 12, marginTop: 14 }}>
-                <TouchableOpacity
-                  onPress={handleDownloadReport}
-                  disabled={isExporting}
-                  style={{
-                    flex: 1,
-                    paddingVertical: 12,
-                    paddingHorizontal: 12,
-                    borderRadius: 14,
-                    backgroundColor: COLORS.accent,
-                    opacity: isExporting ? 0.6 : 1,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      fontWeight: "800",
-                      color: "white",
-                      textAlign: "center",
-                    }}
-                  >
-                    Descargar Excel
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={handleEmailReport}
-                  disabled={isExporting}
-                  style={{
-                    flex: 1,
-                    paddingVertical: 12,
-                    paddingHorizontal: 12,
-                    borderRadius: 14,
-                    backgroundColor: PALETTE.porcelain2,
-                    borderWidth: 1,
-                    borderColor: PALETTE.border,
-                    opacity: isExporting ? 0.6 : 1,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      fontWeight: "800",
-                      color: PALETTE.text,
-                      textAlign: "center",
-                    }}
-                  >
-                    Enviar por correo
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              {isExporting ? (
-                <Text
-                  style={{ fontSize: 12, color: COLORS.neutral, marginTop: 10 }}
-                >
-                  Preparando archivo...
-                </Text>
-              ) : null}
-            </View>
-          </View>
-        ) : null}
 
         <View style={{ marginTop: 20 }}>
           <View

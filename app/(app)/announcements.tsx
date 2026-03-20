@@ -96,11 +96,10 @@ export default function AnnouncementsScreen() {
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const [sites, setSites] = useState<SiteOption[]>([])
   const [roles, setRoles] = useState<RoleOption[]>([])
-  const [notifyTarget, setNotifyTarget] = useState<Announcement | null>(null)
-  const [notifySiteIds, setNotifySiteIds] = useState<string[]>([])
-  const [notifyRoleCodes, setNotifyRoleCodes] = useState<string[]>([])
-  const [isNotifyOpen, setIsNotifyOpen] = useState(false)
-  const [isSendingNotify, setIsSendingNotify] = useState(false)
+  const [isAudienceOptionsLoaded, setIsAudienceOptionsLoaded] = useState(false)
+  const [formAudienceExpanded, setFormAudienceExpanded] = useState(false)
+  const [formSiteIds, setFormSiteIds] = useState<string[]>([])
+  const [formRoleCodes, setFormRoleCodes] = useState<string[]>([])
   const isKeyboardVisible = keyboardHeight > 0
   const modalTopGap = Math.max(14, insets.top + 8)
   const modalBottomGap = 20
@@ -147,6 +146,7 @@ export default function AnnouncementsScreen() {
   }, [])
 
   const loadAudienceOptions = useCallback(async () => {
+    setIsAudienceOptionsLoaded(false)
     try {
       const [sitesRes, rolesRes] = await Promise.all([
         supabase.from("sites").select("id, name").eq("is_active", true).order("name", { ascending: true }),
@@ -156,8 +156,22 @@ export default function AnnouncementsScreen() {
       if (rolesRes.data) setRoles((rolesRes.data as RoleOption[]) ?? [])
     } catch (err) {
       console.error("[ANNOUNCEMENTS] Audience options error:", err)
+    } finally {
+      setIsAudienceOptionsLoaded(true)
     }
   }, [])
+
+  const toggleFormSite = (id: string) => {
+    setFormSiteIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    )
+  }
+
+  const toggleFormRole = (code: string) => {
+    setFormRoleCodes((prev) =>
+      prev.includes(code) ? prev.filter((x) => x !== code) : [...prev, code],
+    )
+  }
 
   useFocusEffect(
     useCallback(() => {
@@ -184,11 +198,15 @@ export default function AnnouncementsScreen() {
       body: "",
       tag: "INFO",
     })
+    setFormAudienceExpanded(false)
+    setFormSiteIds([])
+    setFormRoleCodes([])
   }
 
   const openCreate = () => {
     resetForm()
     setIsFormOpen(true)
+    void loadAudienceOptions()
   }
 
   const openEdit = (announcement: Announcement) => {
@@ -223,53 +241,6 @@ export default function AnnouncementsScreen() {
       console.error("[ANNOUNCEMENTS] Notification error:", error)
       throw error
     }
-  }
-
-  const openNotifyModal = (announcement: Announcement) => {
-    setNotifyTarget(announcement)
-    setNotifySiteIds([])
-    setNotifyRoleCodes([])
-    setIsNotifyOpen(true)
-    void loadAudienceOptions()
-  }
-
-  const closeNotifyModal = () => {
-    setIsNotifyOpen(false)
-    setNotifyTarget(null)
-    setNotifySiteIds([])
-    setNotifyRoleCodes([])
-  }
-
-  const sendNotify = async () => {
-    if (!notifyTarget) return
-    setIsSendingNotify(true)
-    try {
-      await notifyWorkers(notifyTarget, {
-        site_ids: notifySiteIds.length > 0 ? notifySiteIds : undefined,
-        roles: notifyRoleCodes.length > 0 ? notifyRoleCodes : undefined,
-      })
-      Alert.alert("Novedades", "Notificación enviada.")
-      closeNotifyModal()
-    } catch (err) {
-      Alert.alert(
-        "Novedades",
-        getUserFacingAuthError(err, "No se pudo enviar la notificación."),
-      )
-    } finally {
-      setIsSendingNotify(false)
-    }
-  }
-
-  const toggleNotifySite = (id: string) => {
-    setNotifySiteIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    )
-  }
-
-  const toggleNotifyRole = (code: string) => {
-    setNotifyRoleCodes((prev) =>
-      prev.includes(code) ? prev.filter((x) => x !== code) : [...prev, code],
-    )
   }
 
   const handleSave = async () => {
@@ -317,7 +288,10 @@ export default function AnnouncementsScreen() {
           .single()
         if (error) throw error
         if (data) {
-          await notifyWorkers(mapRowToAnnouncement(data as AnnouncementRow))
+          await notifyWorkers(mapRowToAnnouncement(data as AnnouncementRow), {
+            site_ids: formSiteIds.length > 0 ? formSiteIds : undefined,
+            roles: formRoleCodes.length > 0 ? formRoleCodes : undefined,
+          })
         }
       }
 
@@ -438,12 +412,6 @@ export default function AnnouncementsScreen() {
               {canManageAnnouncements ? (
                 <View style={styles.actionsRow}>
                   <TouchableOpacity
-                    onPress={() => openNotifyModal(item)}
-                    style={[ANNOUNCEMENTS_UI.tag, styles.actionChipNotify]}
-                  >
-                    <Text style={styles.actionTextNotify}>Enviar notificación</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
                     onPress={() => openEdit(item)}
                     style={[ANNOUNCEMENTS_UI.tag, styles.actionChip]}
                   >
@@ -517,6 +485,87 @@ export default function AnnouncementsScreen() {
                     )
                   })}
                 </View>
+                {!editingId ? (
+                  <>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setFormAudienceExpanded((prev) => !prev)
+                        if (!formAudienceExpanded && !isAudienceOptionsLoaded) void loadAudienceOptions()
+                      }}
+                      style={[ANNOUNCEMENTS_UI.tag, styles.audienceToggle]}
+                    >
+                      <Ionicons
+                        name={formAudienceExpanded ? "chevron-down" : "chevron-forward"}
+                        size={16}
+                        color={COLORS.accent}
+                      />
+                      <Text style={styles.audienceToggleText}>Seleccionar sede o trabajador</Text>
+                    </TouchableOpacity>
+                    {formAudienceExpanded ? (
+                      <View style={styles.formAudienceSection}>
+                        <Text style={styles.notifyAudienceHint}>
+                          Opcional. Sin marcar = se envía a todos.
+                        </Text>
+                        {!isAudienceOptionsLoaded ? (
+                          <Text style={styles.audienceLoadingText}>Cargando...</Text>
+                        ) : (
+                          <>
+                            {sites.length > 0 ? (
+                              <View style={styles.notifySection}>
+                                <Text style={styles.notifySectionTitle}>Por sede</Text>
+                                <View style={styles.notifyChips}>
+                                  {sites.map((s) => (
+                                    <TouchableOpacity
+                                      key={s.id}
+                                      onPress={() => toggleFormSite(s.id)}
+                                      style={[
+                                        ANNOUNCEMENTS_UI.tag,
+                                        formSiteIds.includes(s.id) ? styles.tagActive : styles.tagInactive,
+                                      ]}
+                                    >
+                                      <Text
+                                        style={
+                                          formSiteIds.includes(s.id) ? styles.tagTextActive : styles.tagTextInactive
+                                        }
+                                      >
+                                        {s.name}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  ))}
+                                </View>
+                              </View>
+                            ) : null}
+                            {roles.length > 0 ? (
+                              <View style={styles.notifySection}>
+                                <Text style={styles.notifySectionTitle}>Por rol</Text>
+                                <View style={styles.notifyChips}>
+                                  {roles.map((r) => (
+                                    <TouchableOpacity
+                                      key={r.code}
+                                      onPress={() => toggleFormRole(r.code)}
+                                      style={[
+                                        ANNOUNCEMENTS_UI.tag,
+                                        formRoleCodes.includes(r.code) ? styles.tagActive : styles.tagInactive,
+                                      ]}
+                                    >
+                                      <Text
+                                        style={
+                                          formRoleCodes.includes(r.code) ? styles.tagTextActive : styles.tagTextInactive
+                                        }
+                                      >
+                                        {r.name}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  ))}
+                                </View>
+                              </View>
+                            ) : null}
+                          </>
+                        )}
+                      </View>
+                    ) : null}
+                  </>
+                ) : null}
                 <View style={styles.modalActions}>
                   <TouchableOpacity onPress={closeForm} style={[ANNOUNCEMENTS_UI.tag, styles.cancelChip]}>
                     <Text style={styles.cancelText}>Cancelar</Text>
@@ -532,95 +581,6 @@ export default function AnnouncementsScreen() {
               </ScrollView>
             </Pressable>
           </View>
-        </Pressable>
-      </Modal>
-
-      <Modal transparent visible={isNotifyOpen} animationType="fade">
-        <Pressable
-          style={[styles.modalOverlay, styles.modalOverlayCentered, { padding: 20 }]}
-          onPress={closeNotifyModal}
-        >
-          <Pressable
-            style={[styles.modalCard, styles.notifyModalCard]}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <Text style={styles.modalTitle}>Enviar notificación</Text>
-            {notifyTarget ? (
-              <>
-                <Text style={styles.notifyTargetTitle} numberOfLines={1}>
-                  {notifyTarget.title}
-                </Text>
-                <Text style={styles.notifyAudienceLabel}>Enviar a</Text>
-                <Text style={styles.notifyAudienceHint}>
-                  Deja todo sin marcar para enviar a todos. Marca sedes y/o roles para filtrar.
-                </Text>
-                {sites.length > 0 ? (
-                  <View style={styles.notifySection}>
-                    <Text style={styles.notifySectionTitle}>Por sede</Text>
-                    <View style={styles.notifyChips}>
-                      {sites.map((s) => (
-                        <TouchableOpacity
-                          key={s.id}
-                          onPress={() => toggleNotifySite(s.id)}
-                          style={[
-                            ANNOUNCEMENTS_UI.tag,
-                            notifySiteIds.includes(s.id) ? styles.tagActive : styles.tagInactive,
-                          ]}
-                        >
-                          <Text
-                            style={
-                              notifySiteIds.includes(s.id) ? styles.tagTextActive : styles.tagTextInactive
-                            }
-                          >
-                            {s.name}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </View>
-                ) : null}
-                {roles.length > 0 ? (
-                  <View style={styles.notifySection}>
-                    <Text style={styles.notifySectionTitle}>Por rol</Text>
-                    <View style={styles.notifyChips}>
-                      {roles.map((r) => (
-                        <TouchableOpacity
-                          key={r.code}
-                          onPress={() => toggleNotifyRole(r.code)}
-                          style={[
-                            ANNOUNCEMENTS_UI.tag,
-                            notifyRoleCodes.includes(r.code) ? styles.tagActive : styles.tagInactive,
-                          ]}
-                        >
-                          <Text
-                            style={
-                              notifyRoleCodes.includes(r.code) ? styles.tagTextActive : styles.tagTextInactive
-                            }
-                          >
-                            {r.name}
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </View>
-                ) : null}
-                <View style={styles.modalActions}>
-                  <TouchableOpacity onPress={closeNotifyModal} style={[ANNOUNCEMENTS_UI.tag, styles.cancelChip]}>
-                    <Text style={styles.cancelText}>Cancelar</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={sendNotify}
-                    disabled={isSendingNotify}
-                    style={[ANNOUNCEMENTS_UI.tag, styles.saveChip, isSendingNotify ? styles.saveChipDisabled : null]}
-                  >
-                    <Text style={styles.saveText}>
-                      {isSendingNotify ? "Enviando..." : "Enviar"}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            ) : null}
-          </Pressable>
         </Pressable>
       </Modal>
     </View>
@@ -809,19 +769,26 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: COLORS.accent,
   },
-  notifyModalCard: {
-    maxHeight: "80%",
+  audienceToggle: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderColor: COLORS.accent,
+    backgroundColor: "rgba(226, 0, 106, 0.08)",
   },
-  notifyTargetTitle: {
-    marginTop: 6,
-    fontSize: 13,
-    color: COLORS.neutral,
-  },
-  notifyAudienceLabel: {
-    marginTop: 14,
-    fontSize: 13,
+  audienceToggleText: {
+    fontSize: 12,
     fontWeight: "700",
-    color: COLORS.text,
+    color: COLORS.accent,
+  },
+  formAudienceSection: {
+    marginTop: 10,
+  },
+  audienceLoadingText: {
+    marginTop: 8,
+    fontSize: 12,
+    color: COLORS.neutral,
   },
   notifyAudienceHint: {
     marginTop: 4,
