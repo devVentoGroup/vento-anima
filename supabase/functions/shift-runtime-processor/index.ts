@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 // @ts-nocheck
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.91.0"
+import { createClient } from "npm:@supabase/supabase-js@2.91.0"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -35,6 +35,7 @@ type ShiftRow = {
   shift_date: string
   start_time: string
   end_time: string
+  shift_kind: "laboral" | "descanso" | null
   employees: { full_name: string | null } | { full_name: string | null }[] | null
   sites: { name: string | null } | { name: string | null }[] | null
 }
@@ -341,7 +342,7 @@ serve(async (req) => {
     0,
     Number(policy?.end_reminder_minutes_before_end ?? DEFAULT_REMINDER_MINUTES) || DEFAULT_REMINDER_MINUTES,
   )
-  const autoCloseGraceMinutes = Math.max(
+  const followupReminderDelayMinutes = Math.max(
     0,
     Number(policy?.auto_checkout_grace_minutes_after_end ?? DEFAULT_AUTO_CLOSE_GRACE_MINUTES) ||
       DEFAULT_AUTO_CLOSE_GRACE_MINUTES,
@@ -351,7 +352,9 @@ serve(async (req) => {
       ? Math.max(0, Number(policy.end_reminder_minutes_after_end))
       : null
   const reminderEnabled = policy?.end_reminder_enabled !== false
-  const autoCloseEnabled = policy?.scheduled_auto_checkout_enabled !== false
+  // Business decision: scheduled auto-checkout by time is disabled.
+  // Open shifts are only reminded; automatic checkout must come from geofence departure flow.
+  const autoCloseEnabled = false
 
   if (!reminderEnabled && !autoCloseEnabled) {
     return new Response(JSON.stringify({ processed: 0, reason: "runtime_disabled" }), {
@@ -362,9 +365,10 @@ serve(async (req) => {
 
   const { data: shifts, error: shiftsError } = await supabase
     .from("employee_shifts")
-    .select("id, employee_id, site_id, shift_date, start_time, end_time, employees!employee_shifts_employee_id_fkey(full_name), sites!employee_shifts_site_id_fkey(name)")
+    .select("id, employee_id, site_id, shift_date, start_time, end_time, shift_kind, employees!employee_shifts_employee_id_fkey(full_name), sites!employee_shifts_site_id_fkey(name)")
     .not("published_at", "is", null)
     .neq("status", "cancelled")
+    .neq("shift_kind", "descanso")
     .gte("shift_date", fromDate)
     .lte("shift_date", toDate)
     .order("shift_date", { ascending: true })
@@ -459,11 +463,11 @@ serve(async (req) => {
     const scheduledEndAt = zonedLocalToUtc(shift.shift_date, shift.end_time, timeZone)
     const scheduledEndMs = new Date(scheduledEndAt).getTime()
     const reminderAtMs = scheduledEndMs - reminderMinutes * 60000
-    const autoCloseAtMs = scheduledEndMs + autoCloseGraceMinutes * 60000
+    const followupReminderAtMs = scheduledEndMs + followupReminderDelayMinutes * 60000
     const reminderWindowEndMs =
       reminderAfterMinutes != null
-        ? Math.min(scheduledEndMs + reminderAfterMinutes * 60000, autoCloseAtMs)
-        : autoCloseAtMs
+        ? Math.min(scheduledEndMs + reminderAfterMinutes * 60000, followupReminderAtMs)
+        : followupReminderAtMs
     const logsKey = `${shift.employee_id}|${shift.site_id}`
     const employeeLogs = logsByEmployeeSite.get(logsKey) ?? []
     const sessions = buildLogSessions(employeeLogs, nowIso)
@@ -480,13 +484,14 @@ serve(async (req) => {
       const tokensForEmployee = tokensByEmployee.get(shift.employee_id) ?? []
       const siteName = unwrapRelation(shift.sites)?.name ?? "tu sede"
       const detail = `${formatShiftDate(shift.shift_date)}, ${shift.end_time.slice(0, 5)}`
+      const hasTokens = tokensForEmployee.length > 0
 
-      if (tokensForEmployee.length > 0) {
+      if (hasTokens) {
         tokensForEmployee.forEach((token) => {
           pushMessages.push({
             to: token,
-            title: "Tu turno está por cerrar",
-            body: `Recuerda cerrar tu turno en ${siteName}. Hora programada de salida: ${detail}.`,
+            title: "Se acerca el fin de tu turno",
+            body: `Se acerca el fin de tu turno en ${siteName}. Recuerda realizar el cierre en la aplicación.`,
             data: {
               type: "shift_end_reminder",
               shift_id: shift.id,
@@ -496,23 +501,23 @@ serve(async (req) => {
         })
       }
 
-      pendingRuntimeInserts.push({
-        shift_id: shift.id,
-        employee_id: shift.employee_id,
-        site_id: shift.site_id,
-        event_type: "end_reminder_sent",
-        scheduled_for: new Date(reminderAtMs).toISOString(),
-        processed_at: nowIso,
-        status: tokensForEmployee.length > 0 ? "applied" : "skipped",
-        notes: tokensForEmployee.length > 0 ? "push_sent" : "no_active_tokens",
-        payload: {
-          shift_date: shift.shift_date,
-          end_time: shift.end_time,
-          tokens: tokensForEmployee.length,
-        },
-      })
-      existingEventKeys.add(`${shift.id}|end_reminder_sent`)
-      if (tokensForEmployee.length > 0) {
+      if (hasTokens) {
+        pendingRuntimeInserts.push({
+          shift_id: shift.id,
+          employee_id: shift.employee_id,
+          site_id: shift.site_id,
+          event_type: "end_reminder_sent",
+          scheduled_for: new Date(reminderAtMs).toISOString(),
+          processed_at: nowIso,
+          status: "applied",
+          notes: "push_sent",
+          payload: {
+            shift_date: shift.shift_date,
+            end_time: shift.end_time,
+            tokens: tokensForEmployee.length,
+          },
+        })
+        existingEventKeys.add(`${shift.id}|end_reminder_sent`)
         reminderCount += 1
       } else {
         skippedCount += 1
@@ -520,48 +525,47 @@ serve(async (req) => {
     }
 
     if (
-      autoCloseEnabled &&
+      reminderEnabled &&
       isOpen &&
-      now.getTime() >= autoCloseAtMs &&
-      !existingEventKeys.has(`${shift.id}|scheduled_auto_checkout`)
+      now.getTime() >= followupReminderAtMs &&
+      !existingEventKeys.has(`${shift.id}|end_reminder_followup_sent`)
     ) {
-      const { data: rpcResult, error: rpcError } = await supabase.rpc("scheduled_auto_close_shift", {
-        p_shift_id: shift.id,
-        p_triggered_at: nowIso,
-      })
+      const tokensForEmployee = tokensByEmployee.get(shift.employee_id) ?? []
+      const siteName = unwrapRelation(shift.sites)?.name ?? "tu sede"
+      const detail = `${formatShiftDate(shift.shift_date)}, ${shift.end_time.slice(0, 5)}`
+      const hasTokens = tokensForEmployee.length > 0
 
-      const applied = !!rpcResult?.applied && !rpcError
-      pendingRuntimeInserts.push({
-        shift_id: shift.id,
-        employee_id: shift.employee_id,
-        site_id: shift.site_id,
-        event_type: "scheduled_auto_checkout",
-        scheduled_for: new Date(autoCloseAtMs).toISOString(),
-        processed_at: nowIso,
-        status: applied ? "applied" : rpcError ? "error" : "skipped",
-        notes: rpcError?.message ?? rpcResult?.reason ?? null,
-        payload: rpcError ? { error: rpcError.message } : rpcResult ?? {},
-      })
-      existingEventKeys.add(`${shift.id}|scheduled_auto_checkout`)
-
-      if (applied) {
-        autoClosedCount += 1
-        const tokensForEmployee = tokensByEmployee.get(shift.employee_id) ?? []
-        const siteName = unwrapRelation(shift.sites)?.name ?? "tu sede"
-        const detail = `${formatShiftDate(shift.shift_date)}, ${shift.end_time.slice(0, 5)}`
+      if (hasTokens) {
+        pendingRuntimeInserts.push({
+          shift_id: shift.id,
+          employee_id: shift.employee_id,
+          site_id: shift.site_id,
+          event_type: "end_reminder_followup_sent",
+          scheduled_for: new Date(followupReminderAtMs).toISOString(),
+          processed_at: nowIso,
+          status: "applied",
+          notes: "push_sent_followup",
+          payload: {
+            shift_date: shift.shift_date,
+            end_time: shift.end_time,
+            tokens: tokensForEmployee.length,
+          },
+        })
+        existingEventKeys.add(`${shift.id}|end_reminder_followup_sent`)
 
         tokensForEmployee.forEach((token) => {
           pushMessages.push({
             to: token,
-            title: "Turno cerrado automáticamente",
-            body: `No registraste salida en ${siteName}. El turno ${detail} fue cerrado automáticamente por el sistema.`,
+            title: "Aún tienes el turno abierto",
+            body: `Tu turno sigue abierto en ${siteName}. Recuerda realizar el cierre en la aplicación.`,
             data: {
-              type: "shift_auto_checkout",
+              type: "shift_end_reminder_followup",
               shift_id: shift.id,
               shift_date: shift.shift_date,
             },
           })
         })
+        reminderCount += 1
       } else {
         skippedCount += 1
       }

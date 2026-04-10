@@ -1,6 +1,10 @@
+import "@/lib/monitoring"
+
+import { useEffect, useRef } from "react"
 import { Stack } from "expo-router"
 import { StatusBar } from "expo-status-bar"
 import Constants from "expo-constants"
+import { View, Text, StyleSheet, TouchableOpacity } from "react-native"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { SafeAreaProvider } from "react-native-safe-area-context"
 
@@ -9,6 +13,34 @@ import { AppConfigProvider } from "@/contexts/app-config-context"
 import { AttendanceProvider } from "@/contexts/attendance-context"
 import { AppUpdateGate } from "@/components/AppUpdateGate"
 import { useAppUpdatePolicy } from "@/hooks/use-app-update-policy"
+import { reportError } from "@/lib/monitoring"
+
+type LayoutErrorBoundaryProps = {
+  error: Error
+  retry: () => void
+}
+
+export function ErrorBoundary({ error, retry }: LayoutErrorBoundaryProps) {
+  const reportedErrorRef = useRef<Error | null>(null)
+
+  useEffect(() => {
+    if (reportedErrorRef.current === error) {
+      return
+    }
+    reportedErrorRef.current = error
+    reportError(error, { screen: "root_layout_error_boundary" })
+  }, [error])
+
+  return (
+    <View style={styles.errorContainer}>
+      <Text style={styles.errorTitle}>Ocurrio un error inesperado</Text>
+      <Text style={styles.errorText}>{error?.message ?? "Sin detalles"}</Text>
+      <TouchableOpacity style={styles.errorButton} onPress={retry}>
+        <Text style={styles.errorButtonText}>Reintentar</Text>
+      </TouchableOpacity>
+    </View>
+  )
+}
 
 export default function RootLayout() {
   const configuredAppUpdateKey = Constants.expoConfig?.extra?.appUpdateKey as string | undefined
@@ -42,3 +74,35 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   )
 }
+
+const styles = StyleSheet.create({
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+    backgroundColor: "#F7F5F8",
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  errorText: {
+    fontSize: 14,
+    color: "#475569",
+    textAlign: "center",
+    marginBottom: 16,
+  },
+  errorButton: {
+    backgroundColor: "#111827",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+  },
+  errorButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+  },
+})

@@ -30,6 +30,8 @@ export type ShiftForEdit = {
   break_minutes: number | null;
   notes: string | null;
   published_at: string | null;
+  show_end_as_close?: boolean | null;
+  shift_kind?: "laboral" | "descanso" | null;
 };
 
 type FormState = {
@@ -41,6 +43,8 @@ type FormState = {
   breakMinutes: string;
   notes: string;
   publishNow: boolean;
+  showEndAsClose: boolean;
+  shiftKind: "laboral" | "descanso";
 };
 
 function toTimeInput(v: string) {
@@ -77,6 +81,8 @@ export function EditShiftModal({
     breakMinutes: "0",
     notes: "",
     publishNow: true,
+    showEndAsClose: false,
+    shiftKind: "laboral",
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { policy: shiftPolicy, loaded: shiftPolicyLoaded } = useShiftPolicy();
@@ -94,6 +100,8 @@ export function EditShiftModal({
         breakMinutes: String(shift.break_minutes ?? 0),
         notes: shift.notes ?? "",
         publishNow: Boolean(shift.published_at),
+        showEndAsClose: Boolean(shift.show_end_as_close),
+        shiftKind: shift.shift_kind === "descanso" ? "descanso" : "laboral",
       });
     }
   }, [visible, shift]);
@@ -147,6 +155,8 @@ export function EditShiftModal({
         end_time: endTime.length === 5 ? endTime + ":00" : endTime,
         break_minutes: breakMinutes,
         notes: form.notes.trim() || null,
+        shift_kind: form.shiftKind,
+        show_end_as_close: form.showEndAsClose,
         status: "scheduled",
       };
 
@@ -300,6 +310,35 @@ export function EditShiftModal({
                 <Text style={styles.checkLabel}>Publicar ahora (visible para el empleado)</Text>
               </TouchableOpacity>
             ) : null}
+
+            <TouchableOpacity
+              onPress={() => setForm((p) => ({ ...p, showEndAsClose: !p.showEndAsClose }))}
+              style={styles.checkRow}
+            >
+              <Ionicons
+                name={form.showEndAsClose ? "checkbox" : "square-outline"}
+                size={22}
+                color={form.showEndAsClose ? COLORS.accent : COLORS.neutral}
+              />
+              <Text style={styles.checkLabel}>Mostrar salida como "Cierre" al empleado</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() =>
+                setForm((p) => ({
+                  ...p,
+                  shiftKind: p.shiftKind === "descanso" ? "laboral" : "descanso",
+                }))
+              }
+              style={styles.checkRow}
+            >
+              <Ionicons
+                name={form.shiftKind === "descanso" ? "checkbox" : "square-outline"}
+                size={22}
+                color={form.shiftKind === "descanso" ? COLORS.accent : COLORS.neutral}
+              />
+              <Text style={styles.checkLabel}>Marcar como turno de descanso (no laboral)</Text>
+            </TouchableOpacity>
 
             <View style={styles.actions}>
               <TouchableOpacity onPress={handleClose} style={styles.btnSecondary}>

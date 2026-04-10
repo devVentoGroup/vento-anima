@@ -15,6 +15,7 @@ import * as Notifications from "expo-notifications"
 import * as Device from "expo-device"
 
 import { supabase } from "@/lib/supabase"
+import { setMonitoringUser } from "@/lib/monitoring"
 
 interface Employee {
   id: string
@@ -112,6 +113,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     segmentsRef.current = segments
   }, [segments])
 
+  useEffect(() => {
+    setMonitoringUser(
+      user
+        ? {
+            id: user.id,
+            email: user.email ?? null,
+          }
+        : null,
+    )
+  }, [user])
+
   const cacheKey = (userId: string, suffix: string) =>
     `auth_cache_${suffix}_${userId}`
 
@@ -143,6 +155,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ])
     } catch (err) {
       console.warn("[AUTH] Cache clear failed:", err)
+    }
+  }
+
+  const resetAuthState = () => {
+    setSession(null)
+    setUser(null)
+    setEmployee(null)
+    setEmployeeSites([])
+    setSelectedSiteId(null)
+    setHasPendingSiteChanges(false)
+    lastUserIdRef.current = null
+  }
+
+  const clearInvalidSession = async () => {
+    try {
+      await supabase.auth.signOut({ scope: "local" })
+    } catch (err) {
+      console.warn("[AUTH] Local signOut failed while clearing invalid session:", err)
+    } finally {
+      resetAuthState()
+      lastSessionRef.current = null
     }
   }
 
@@ -420,16 +453,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         if (error) {
           console.warn("[AUTH] getSession error:", error)
+          const message = String((error as any)?.message ?? "").toLowerCase()
+          const isInvalidRefreshToken = message.includes("invalid refresh token")
+          if (isInvalidRefreshToken) {
+            await clearInvalidSession()
+            return
+          }
+
           const fallback = lastSessionRef.current
           if (fallback) {
             setSession(fallback)
             setUser(fallback.user ?? null)
           } else {
-            setSession(null)
-            setUser(null)
-            setEmployee(null)
-            setEmployeeSites([])
-            setSelectedSiteId(null)
+            resetAuthState()
           }
           return
         }
@@ -459,9 +495,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           if ((event as string) === "TOKEN_REFRESH_FAILED") {
             console.warn("[AUTH] Token refresh failed, keeping last session")
-            const fallback = lastSessionRef.current
-            setSession(fallback)
-            setUser(fallback?.user ?? null)
+            await clearInvalidSession()
             return
           }
 

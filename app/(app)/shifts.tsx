@@ -29,9 +29,7 @@ import {
 } from "@/components/shifts/EditShiftModal";
 import {
   formatShiftDateLabel,
-  formatShiftMinutes,
   formatShiftShortDate,
-  getShiftDurationMinutes,
   getShiftRangeLabel,
   getShiftSiteName,
   getShiftStatusMeta,
@@ -78,6 +76,7 @@ export default function ShiftsScreen() {
   const [managerEmployees, setManagerEmployees] = useState<EmployeeOption[]>([]);
   const [managerSites, setManagerSites] = useState<SiteOption[]>([]);
   const [managerRows, setManagerRows] = useState<ManagerShiftRow[]>([]);
+  const [expandedManagerDays, setExpandedManagerDays] = useState<Record<string, boolean>>({});
 
   const { has: hasCapability, loaded: capabilitiesLoaded } = useRoleCapabilities(
     employee?.role ?? null,
@@ -133,7 +132,7 @@ export default function ShiftsScreen() {
       let query = supabase
         .from("employee_shifts")
         .select(
-          "id, employee_id, shift_date, start_time, end_time, break_minutes, notes, status, site_id, sites(name), published_at, employees!employee_shifts_employee_id_fkey(full_name)",
+          "id, employee_id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, sites(name), published_at, employees!employee_shifts_employee_id_fkey(full_name)",
         )
         .gte("shift_date", getDateOffset(-7))
         .lte("shift_date", getDateOffset(30))
@@ -163,7 +162,7 @@ export default function ShiftsScreen() {
       const { data, error } = await supabase
         .from("employee_shifts")
         .select(
-          "id, shift_date, start_time, end_time, break_minutes, notes, status, site_id, sites(name)",
+          "id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, sites(name)",
         )
         .eq("employee_id", user.id)
         .not("published_at", "is", null)
@@ -207,6 +206,8 @@ export default function ShiftsScreen() {
       shift_date: row.shift_date,
       start_time: row.start_time,
       end_time: row.end_time,
+      shift_kind: row.shift_kind ?? "laboral",
+      show_end_as_close: row.show_end_as_close ?? false,
       break_minutes: row.break_minutes ?? 0,
       notes: row.notes,
       published_at: row.published_at ?? null,
@@ -286,6 +287,38 @@ export default function ShiftsScreen() {
   }, [rows]);
 
   const nextShift = upcomingRows[0] ?? null;
+
+  const managerRowsByDay = useMemo(() => {
+    const map = new Map<string, ManagerShiftRow[]>();
+    for (const row of managerRows) {
+      const list = map.get(row.shift_date) ?? [];
+      list.push(row);
+      map.set(row.shift_date, list);
+    }
+    return Array.from(map.entries()).map(([shiftDate, dayRows]) => ({ shiftDate, rows: dayRows }));
+  }, [managerRows]);
+
+  useEffect(() => {
+    if (managerRowsByDay.length === 0) {
+      setExpandedManagerDays({});
+      return;
+    }
+    setExpandedManagerDays((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const day of managerRowsByDay) {
+        if (Object.prototype.hasOwnProperty.call(prev, day.shiftDate)) {
+          next[day.shiftDate] = prev[day.shiftDate];
+        } else {
+          next[day.shiftDate] = true;
+        }
+      }
+      return next;
+    });
+  }, [managerRowsByDay]);
+
+  const toggleManagerDay = useCallback((shiftDate: string) => {
+    setExpandedManagerDays((prev) => ({ ...prev, [shiftDate]: !prev[shiftDate] }));
+  }, []);
 
   const handleBack = () => {
     if (router.canGoBack()) {
@@ -484,7 +517,6 @@ export default function ShiftsScreen() {
             </Text>
             {upcomingRows.map((row) => {
               const statusMeta = getShiftStatusMeta(row.status);
-              const durationLabel = formatShiftMinutes(getShiftDurationMinutes(row));
               return (
                 <View
                   key={row.id}
@@ -530,18 +562,11 @@ export default function ShiftsScreen() {
                     </View>
                   </View>
 
-                  <View style={{ flexDirection: "row", gap: 12, marginTop: 14 }}>
+                  <View style={{ marginTop: 14 }}>
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 12, color: COLORS.neutral }}>Horario</Text>
                       <Text style={{ fontSize: 15, fontWeight: "800", color: COLORS.text, marginTop: 4 }}>
                         {getShiftRangeLabel(row)}
-                      </Text>
-                    </View>
-
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 12, color: COLORS.neutral }}>Jornada neta</Text>
-                      <Text style={{ fontSize: 15, fontWeight: "800", color: COLORS.text, marginTop: 4 }}>
-                        {durationLabel}
                       </Text>
                     </View>
                   </View>
@@ -561,7 +586,7 @@ export default function ShiftsScreen() {
           </View>
         ) : null}
 
-        {canManageShifts && managerRows.length > 0 ? (
+        {canManageShifts && managerRowsByDay.length > 0 ? (
           <View style={{ marginTop: 22 }}>
             <Text style={{ fontSize: 16, fontWeight: "800", color: COLORS.text, marginBottom: 12 }}>
               Turnos del equipo
@@ -569,127 +594,176 @@ export default function ShiftsScreen() {
             <Text style={{ fontSize: 13, color: COLORS.neutral, marginBottom: 12 }}>
               Turnos que puedes editar (tu sede o todos si eres propietario/gerente general).
             </Text>
-            {managerRows.map((row) => {
-              const statusMeta = getShiftStatusMeta(row.status);
+            {managerRowsByDay.map(({ shiftDate, rows: dayRows }) => {
+              const isExpanded = expandedManagerDays[shiftDate] ?? true;
+              const actionableCount = dayRows.filter((row) => isUpcomingShift(row)).length;
               return (
                 <View
-                  key={row.id}
+                  key={shiftDate}
                   style={{
                     borderRadius: 18,
-                    padding: 16,
                     marginBottom: 12,
                     backgroundColor: COLORS.white,
                     borderWidth: 1,
                     borderColor: COLORS.border,
+                    overflow: "hidden",
                   }}
                 >
-                  <View
+                  <TouchableOpacity
+                    onPress={() => toggleManagerDay(shiftDate)}
+                    activeOpacity={0.86}
                     style={{
+                      paddingHorizontal: 16,
+                      paddingVertical: 14,
                       flexDirection: "row",
-                      alignItems: "flex-start",
+                      alignItems: "center",
                       justifyContent: "space-between",
-                      gap: 12,
+                      backgroundColor: COLORS.porcelainAlt,
                     }}
                   >
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 16, fontWeight: "800", color: COLORS.text }}>
-                        {getEmployeeName(row)} · {formatShiftDateLabel(row.shift_date)}
+                    <View style={{ flex: 1, paddingRight: 12 }}>
+                      <Text style={{ fontSize: 15, fontWeight: "900", color: COLORS.text }}>
+                        {formatShiftDateLabel(shiftDate)}
                       </Text>
-                      <Text style={{ fontSize: 13, color: COLORS.neutral, marginTop: 6 }}>
-                        {getShiftSiteName(row.sites)}
-                      </Text>
-                    </View>
-                    <View
-                      style={{
-                        borderRadius: 999,
-                        paddingHorizontal: 10,
-                        paddingVertical: 6,
-                        backgroundColor: statusMeta.bg,
-                        borderWidth: 1,
-                        borderColor: statusMeta.border,
-                      }}
-                    >
-                      <Text style={{ fontSize: 11, fontWeight: "800", color: statusMeta.text }}>
-                        {statusMeta.label}
+                      <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
+                        {dayRows.length} turnos · {actionableCount} con acciones disponibles
                       </Text>
                     </View>
-                  </View>
-                  <View style={{ marginTop: 14 }}>
-                    <View>
-                      <Text style={{ fontSize: 12, color: COLORS.neutral }}>Horario</Text>
-                      <Text style={{ fontSize: 15, fontWeight: "800", color: COLORS.text, marginTop: 4 }}>
-                        {getShiftRangeLabel(row)}
-                      </Text>
+                    <Ionicons
+                      name={isExpanded ? "chevron-up" : "chevron-down"}
+                      size={18}
+                      color={COLORS.neutral}
+                    />
+                  </TouchableOpacity>
+
+                  {isExpanded ? (
+                    <View style={{ padding: 12 }}>
+                      {dayRows.map((row) => {
+                        const statusMeta = getShiftStatusMeta(row.status);
+                        const isFutureOrOpen = isUpcomingShift(row);
+                        const canMutate = isFutureOrOpen && (row.status === "scheduled" || row.status === "confirmed");
+                        return (
+                          <View
+                            key={row.id}
+                            style={{
+                              borderRadius: 14,
+                              padding: 14,
+                              marginBottom: 10,
+                              backgroundColor: COLORS.white,
+                              borderWidth: 1,
+                              borderColor: COLORS.border,
+                            }}
+                          >
+                            <View
+                              style={{
+                                flexDirection: "row",
+                                alignItems: "flex-start",
+                                justifyContent: "space-between",
+                                gap: 10,
+                              }}
+                            >
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ fontSize: 15, fontWeight: "800", color: COLORS.text }}>
+                                  {getEmployeeName(row)}
+                                </Text>
+                                <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 5 }}>
+                                  {getShiftSiteName(row.sites)}
+                                </Text>
+                                <Text style={{ fontSize: 13, color: COLORS.text, marginTop: 6, fontWeight: "700" }}>
+                                  {getShiftRangeLabel(row)}
+                                </Text>
+                              </View>
+                              <View
+                                style={{
+                                  borderRadius: 999,
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 6,
+                                  backgroundColor: statusMeta.bg,
+                                  borderWidth: 1,
+                                  borderColor: statusMeta.border,
+                                }}
+                              >
+                                <Text style={{ fontSize: 11, fontWeight: "800", color: statusMeta.text }}>
+                                  {statusMeta.label}
+                                </Text>
+                              </View>
+                            </View>
+
+                            {canMutate ? (
+                              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+                                <TouchableOpacity
+                                  onPress={() => openEditShift(row)}
+                                  disabled={updatingShiftId === row.id}
+                                  style={{
+                                    paddingHorizontal: 14,
+                                    paddingVertical: 8,
+                                    borderRadius: 12,
+                                    borderWidth: 1,
+                                    borderColor: COLORS.accent,
+                                    backgroundColor: "rgba(226, 0, 106, 0.08)",
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 13, fontWeight: "700", color: COLORS.accent }}>Editar</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  onPress={() => openEditShift(row)}
+                                  disabled={updatingShiftId === row.id}
+                                  style={{
+                                    paddingHorizontal: 14,
+                                    paddingVertical: 8,
+                                    borderRadius: 12,
+                                    borderWidth: 1,
+                                    borderColor: "#1D4ED8",
+                                    backgroundColor: "#EFF6FF",
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 13, fontWeight: "700", color: "#1D4ED8" }}>Reasignar</Text>
+                                </TouchableOpacity>
+                                {row.status === "scheduled" ? (
+                                  <TouchableOpacity
+                                    onPress={() => handleConfirmShift(row)}
+                                    disabled={updatingShiftId === row.id}
+                                    style={{
+                                      paddingHorizontal: 14,
+                                      paddingVertical: 8,
+                                      borderRadius: 12,
+                                      borderWidth: 1,
+                                      borderColor: "#047857",
+                                      backgroundColor: "#ECFDF3",
+                                    }}
+                                  >
+                                    {updatingShiftId === row.id ? (
+                                      <ActivityIndicator size="small" color="#047857" />
+                                    ) : (
+                                      <Text style={{ fontSize: 13, fontWeight: "700", color: "#047857" }}>Confirmar</Text>
+                                    )}
+                                  </TouchableOpacity>
+                                ) : null}
+                                <TouchableOpacity
+                                  onPress={() => handleCancelShift(row)}
+                                  disabled={updatingShiftId === row.id}
+                                  style={{
+                                    paddingHorizontal: 14,
+                                    paddingVertical: 8,
+                                    borderRadius: 12,
+                                    borderWidth: 1,
+                                    borderColor: "#B91C1C",
+                                    backgroundColor: "rgba(254, 242, 242, 1)",
+                                  }}
+                                >
+                                  <Text style={{ fontSize: 13, fontWeight: "700", color: "#B91C1C" }}>Cancelar turno</Text>
+                                </TouchableOpacity>
+                              </View>
+                            ) : (
+                              <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 12 }}>
+                                Turno finalizado o no editable.
+                              </Text>
+                            )}
+                          </View>
+                        );
+                      })}
                     </View>
-                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
-                      <TouchableOpacity
-                        onPress={() => openEditShift(row)}
-                        disabled={updatingShiftId === row.id}
-                        style={{
-                          paddingHorizontal: 14,
-                          paddingVertical: 8,
-                          borderRadius: 12,
-                          borderWidth: 1,
-                          borderColor: COLORS.accent,
-                          backgroundColor: "rgba(226, 0, 106, 0.08)",
-                        }}
-                      >
-                        <Text style={{ fontSize: 13, fontWeight: "700", color: COLORS.accent }}>Editar</Text>
-                      </TouchableOpacity>
-                      {(row.status === "scheduled" || row.status === "confirmed") ? (
-                        <TouchableOpacity
-                          onPress={() => openEditShift(row)}
-                          disabled={updatingShiftId === row.id}
-                          style={{
-                            paddingHorizontal: 14,
-                            paddingVertical: 8,
-                            borderRadius: 12,
-                            borderWidth: 1,
-                            borderColor: "#1D4ED8",
-                            backgroundColor: "#EFF6FF",
-                          }}
-                        >
-                          <Text style={{ fontSize: 13, fontWeight: "700", color: "#1D4ED8" }}>Reasignar</Text>
-                        </TouchableOpacity>
-                      ) : null}
-                      {row.status === "scheduled" ? (
-                        <TouchableOpacity
-                          onPress={() => handleConfirmShift(row)}
-                          disabled={updatingShiftId === row.id}
-                          style={{
-                            paddingHorizontal: 14,
-                            paddingVertical: 8,
-                            borderRadius: 12,
-                            borderWidth: 1,
-                            borderColor: "#047857",
-                            backgroundColor: "#ECFDF3",
-                          }}
-                        >
-                          {updatingShiftId === row.id ? (
-                            <ActivityIndicator size="small" color="#047857" />
-                          ) : (
-                            <Text style={{ fontSize: 13, fontWeight: "700", color: "#047857" }}>Confirmar</Text>
-                          )}
-                        </TouchableOpacity>
-                      ) : null}
-                      {(row.status === "scheduled" || row.status === "confirmed") ? (
-                        <TouchableOpacity
-                          onPress={() => handleCancelShift(row)}
-                          disabled={updatingShiftId === row.id}
-                          style={{
-                            paddingHorizontal: 14,
-                            paddingVertical: 8,
-                            borderRadius: 12,
-                            borderWidth: 1,
-                            borderColor: "#B91C1C",
-                            backgroundColor: "rgba(254, 242, 242, 1)",
-                          }}
-                        >
-                          <Text style={{ fontSize: 13, fontWeight: "700", color: "#B91C1C" }}>Cancelar turno</Text>
-                        </TouchableOpacity>
-                      ) : null}
-                    </View>
-                  </View>
+                  ) : null}
                 </View>
               );
             })}

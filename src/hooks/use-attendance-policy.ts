@@ -22,7 +22,7 @@ const DEFAULT_POLICY: AttendancePolicy = {
   geofence_latch_ttl_checkin_ms: 15 * 60 * 1000,
   geofence_latch_ttl_checkout_ms: 10 * 60 * 1000,
   shift_departure_max_accuracy_meters: 35,
-  shift_departure_threshold_meters: 500,
+  shift_departure_threshold_meters: 200,
   shift_departure_min_check_interval_ms: 45000,
   default_radius_meters: null,
 }

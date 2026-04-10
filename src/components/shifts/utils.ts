@@ -5,11 +5,15 @@ export type ShiftStatus =
   | "cancelled"
   | "no_show";
 
+export type ShiftKind = "laboral" | "descanso";
+
 export type ShiftRow = {
   id: string;
   shift_date: string;
   start_time: string;
   end_time: string;
+  shift_kind?: ShiftKind | null;
+  show_end_as_close?: boolean | null;
   break_minutes: number | null;
   notes: string | null;
   status: ShiftStatus;
@@ -35,8 +39,13 @@ export function buildShiftDateTime(dateValue: string, timeValue: string) {
   return new Date(`${dateValue}T${timeValue}`);
 }
 
-export function getShiftRangeLabel(shift: Pick<ShiftRow, "start_time" | "end_time">) {
-  return `${formatShiftTime(shift.start_time)} - ${formatShiftTime(shift.end_time)}`;
+export function getShiftRangeLabel(
+  shift: Pick<ShiftRow, "start_time" | "end_time" | "show_end_as_close" | "shift_kind">,
+) {
+  if (shift.shift_kind === "descanso") return "Descanso";
+  return shift.show_end_as_close
+    ? `${formatShiftTime(shift.start_time)} - Cierre`
+    : `${formatShiftTime(shift.start_time)} - ${formatShiftTime(shift.end_time)}`;
 }
 
 export function getShiftDurationMinutes(
@@ -124,11 +133,18 @@ export function getShiftStatusMeta(status: ShiftStatus) {
 }
 
 export function isUpcomingShift(
-  shift: Pick<ShiftRow, "shift_date" | "end_time" | "status">,
+  shift: Pick<ShiftRow, "shift_date" | "end_time" | "status" | "shift_kind">,
   now = new Date(),
 ) {
   if (shift.status === "cancelled" || shift.status === "completed" || shift.status === "no_show") {
     return false;
+  }
+
+  if (shift.shift_kind === "descanso") {
+    const today = new Date(now);
+    today.setHours(0, 0, 0, 0);
+    const shiftDate = new Date(`${shift.shift_date}T00:00:00`);
+    return shiftDate.getTime() >= today.getTime();
   }
 
   const endAt = buildShiftDateTime(shift.shift_date, shift.end_time);

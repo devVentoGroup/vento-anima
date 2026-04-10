@@ -272,7 +272,7 @@ export default function HomeScreen() {
       const { data, error } = await supabase
         .from("employee_shifts")
         .select(
-          "id, shift_date, start_time, end_time, break_minutes, notes, status, site_id, sites(name)",
+          "id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, sites(name)",
         )
         .eq("employee_id", user.id)
         .not("published_at", "is", null)

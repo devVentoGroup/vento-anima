@@ -265,7 +265,7 @@ const ATTENDANCE_GEOFENCE = {
 }
 
 const SHIFT_DEPARTURE_TRACKING = {
-  thresholdMeters: 500,
+  thresholdMeters: 200,
   maxAccuracyMeters: 35,
   minCheckIntervalMs: 45000,
 }
@@ -680,6 +680,7 @@ export function useAttendance() {
         .eq("employee_id", employeeId)
         .eq("site_id", siteId)
         .eq("shift_date", today)
+        .neq("shift_kind", "descanso")
         .not("published_at", "is", null)
         .limit(1)
         .maybeSingle()
@@ -2937,12 +2938,26 @@ export function useAttendance() {
     ],
   )
 
+  const refreshGeofenceRealtimeRef = useRef(refreshGeofence)
+  const registerOpenShiftDepartureEventRef = useRef(registerOpenShiftDepartureEvent)
+
+  useEffect(() => {
+    refreshGeofenceRealtimeRef.current = refreshGeofence
+  }, [refreshGeofence])
+
+  useEffect(() => {
+    registerOpenShiftDepartureEventRef.current = registerOpenShiftDepartureEvent
+  }, [registerOpenShiftDepartureEvent])
+
   const startRealtimeGeofence = useCallback(async () => {
     if (realtimeWatchRef.current) return
     const isCheckedInNow = attendanceState.status === "checked_in"
 
-    const { status } = await Location.requestForegroundPermissionsAsync()
-    if (status !== "granted") return
+    let permission = await Location.getForegroundPermissionsAsync()
+    if (permission.status !== "granted" && permission.canAskAgain) {
+      permission = await Location.requestForegroundPermissionsAsync()
+    }
+    if (permission.status !== "granted") return
 
     const isEnabled = await Location.hasServicesEnabledAsync()
     if (!isEnabled) return
@@ -2972,13 +2987,18 @@ export function useAttendance() {
         lastRealtimeTickRef.current = now
 
         const validated = buildValidatedLocationFromRaw(rawLocation)
-        void refreshGeofence({ force: true, location: validated, silent: true, source: "auto" })
-        void registerOpenShiftDepartureEvent(validated)
+        void refreshGeofenceRealtimeRef.current({
+          force: true,
+          location: validated,
+          silent: true,
+          source: "auto",
+        })
+        void registerOpenShiftDepartureEventRef.current(validated)
       }
     )
 
     realtimeWatchRef.current = subscription
-  }, [attendanceState.status, refreshGeofence, registerOpenShiftDepartureEvent])
+  }, [attendanceState.status])
 
   const stopRealtimeGeofence = useCallback(() => {
     if (realtimeWatchRef.current) {
@@ -3070,4 +3090,3 @@ export function useAttendance() {
     stopRealtimeGeofence,
   }
 }
-

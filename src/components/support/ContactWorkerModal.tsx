@@ -1,8 +1,11 @@
 import {
   ActivityIndicator,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -57,8 +60,13 @@ export default function ContactWorkerModal({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.box} onPress={(e) => e.stopPropagation()}>
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoidingRoot}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 18 : 0}
+      >
+        <Pressable style={styles.backdrop} onPress={onClose}>
+          <Pressable style={styles.box} onPress={(e) => e.stopPropagation()}>
           <View style={styles.header}>
             <Text style={styles.title}>
               {mode === "aviso" ? "Enviar aviso a trabajador" : "Iniciar conversación"}
@@ -98,7 +106,11 @@ export default function ContactWorkerModal({
               )}
             </>
           ) : (
-            <>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.formContent}
+            >
               <TouchableOpacity
                 style={styles.selectedRow}
                 onPress={() => onSelectWorker(null)}
@@ -148,15 +160,19 @@ export default function ContactWorkerModal({
                   )}
                 </TouchableOpacity>
               </View>
-            </>
+            </ScrollView>
           )}
+          </Pressable>
         </Pressable>
-      </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  keyboardAvoidingRoot: {
+    flex: 1,
+  },
   backdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",
@@ -248,6 +264,9 @@ const styles = StyleSheet.create({
     minHeight: 90,
     textAlignVertical: "top",
     marginBottom: 20,
+  },
+  formContent: {
+    paddingBottom: 8,
   },
   footer: {
     flexDirection: "row",
