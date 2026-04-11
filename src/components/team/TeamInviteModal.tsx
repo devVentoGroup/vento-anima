@@ -13,9 +13,10 @@ import {
   View,
 } from "react-native";
 import { useEffect, useMemo, useState } from "react";
-import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
 import { MODAL_MAX_WIDTH } from "@/constants/layout";
+import { TeamInviteFormFields } from "@/components/team/TeamInviteFormFields";
+import { TeamInvitePickerOverlay } from "@/components/team/TeamInvitePickerOverlay";
 import { TEAM_UI } from "@/components/team/ui";
 import type { InviteFormState, RoleRow, SiteRow } from "@/components/team/types";
 
@@ -65,7 +66,6 @@ export default function TeamInviteModal({
 }: TeamInviteModalProps) {
   const { height: windowHeight } = useWindowDimensions();
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const hasInvite = Boolean(inviteEmailSent);
   const isKeyboardVisible = keyboardHeight > 0;
   const modalTopGap = Math.max(14, insets.top + 8);
   const modalBottomGap = 20;
@@ -120,200 +120,36 @@ export default function TeamInviteModal({
               keyboardShouldPersistTaps="handled"
               contentContainerStyle={styles.scrollContent}
             >
-              <Text style={styles.modalTitle}>Invitar trabajador</Text>
-              <Text style={styles.modalSubtitle}>
-                Si no tiene cuenta, le enviaremos un correo con el enlace para crearla. Si ya tiene cuenta (ej. en Vento Pass), se agregará al equipo y podrá entrar con su correo y contraseña.
-              </Text>
-
-              <Text style={styles.modalLabel}>Correo</Text>
-              <TextInput
-                value={form.email}
-                onChangeText={(value) => onUpdateForm({ email: value })}
-                placeholder="correo@empresa.com"
-                placeholderTextColor={COLORS.neutral}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                style={styles.input}
+              <TeamInviteFormFields
+                styles={styles}
+                form={form}
+                inviteEmailSent={inviteEmailSent}
+                inviteSuccessMessage={inviteSuccessMessage}
+                isInviting={isInviting}
+                canPickSites={canPickSites}
+                inviteRoleLabel={inviteRoleLabel}
+                inviteSiteLabel={inviteSiteLabel}
+                onClose={onClose}
+                onSubmit={onSubmit}
+                onOpenPicker={onOpenPicker}
+                onUpdateForm={onUpdateForm}
               />
-
-              <Text style={styles.modalLabel}>Nombre completo</Text>
-              <TextInput
-                value={form.fullName}
-                onChangeText={(value) => onUpdateForm({ fullName: value })}
-                placeholder="Nombre completo"
-                placeholderTextColor={COLORS.neutral}
-                style={styles.input}
-              />
-
-              <Text style={styles.modalLabel}>Rol</Text>
-              <TouchableOpacity
-                onPress={() => onOpenPicker("inviteRole")}
-                style={[
-                  TEAM_UI.chip,
-                  {
-                    borderColor: COLORS.border,
-                    backgroundColor: COLORS.porcelainAlt,
-                    marginTop: 6,
-                  },
-                ]}
-              >
-                <View style={styles.selectRow}>
-                  <Text style={styles.selectText}>
-                    {inviteRoleLabel ?? "Selecciona un rol"}
-                  </Text>
-                  <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
-                </View>
-              </TouchableOpacity>
-
-              <Text style={styles.modalLabel}>Sede principal</Text>
-              <TouchableOpacity
-                onPress={canPickSites ? () => onOpenPicker("inviteSite") : undefined}
-                disabled={!canPickSites}
-                style={[
-                  TEAM_UI.chip,
-                  {
-                    borderColor: COLORS.border,
-                    backgroundColor: COLORS.porcelainAlt,
-                    marginTop: 6,
-                    opacity: canPickSites ? 1 : 0.6,
-                  },
-                ]}
-              >
-                <View style={styles.selectRow}>
-                  <Text style={styles.selectText}>
-                    {inviteSiteLabel ?? "Selecciona la sede"}
-                  </Text>
-                  <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
-                </View>
-              </TouchableOpacity>
-
-              <Text style={styles.modalLabel}>Expira</Text>
-              <TextInput
-                value={form.expiresAt}
-                onChangeText={(value) => onUpdateForm({ expiresAt: value })}
-                placeholder="Opcional, ej. 2026-03-20"
-                placeholderTextColor={COLORS.neutral}
-                style={styles.input}
-                keyboardType="numbers-and-punctuation"
-              />
-
-              {hasInvite ? (
-                <View style={styles.successBox}>
-                  <Text style={styles.successTitle}>
-                    {inviteSuccessMessage ? "Agregado al equipo" : "Invitacion enviada"}
-                  </Text>
-                  <Text style={styles.modalHint}>
-                    {inviteSuccessMessage ?? `Correo enviado a ${inviteEmailSent}.`}
-                  </Text>
-                </View>
-              ) : null}
-
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  onPress={onClose}
-                  style={[
-                    TEAM_UI.chip,
-                    {
-                      borderColor: COLORS.border,
-                      backgroundColor: COLORS.porcelainAlt,
-                    },
-                  ]}
-                >
-                  <Text style={styles.cancelText}>{hasInvite ? "Cerrar" : "Cancelar"}</Text>
-                </TouchableOpacity>
-                {!hasInvite ? (
-                  <TouchableOpacity
-                    onPress={onSubmit}
-                    disabled={isInviting}
-                    style={[
-                      TEAM_UI.chip,
-                      {
-                        borderColor: COLORS.rosegold,
-                        backgroundColor: "rgba(242, 198, 192, 0.25)",
-                        opacity: isInviting ? 0.7 : 1,
-                      },
-                    ]}
-                  >
-                    <Text style={styles.saveText}>
-                      {isInviting ? "Enviando..." : "Enviar invitación"}
-                    </Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
             </ScrollView>
           </View>
         </View>
 
-        {activePicker ? (
-          <View
-            style={[
-              styles.pickerOverlay,
-              {
-                paddingTop: Math.max(16, insets.top + 8),
-                paddingBottom: Math.max(16, insets.bottom + 12),
-              },
-            ]}
-          >
-            <View style={styles.pickerHeader}>
-              <TouchableOpacity onPress={onClosePicker} style={styles.pickerBack}>
-                <Ionicons name="arrow-back" size={18} color={COLORS.text} />
-              </TouchableOpacity>
-              <Text style={styles.pickerTitle}>
-                {activePicker === "inviteRole" ? "Rol" : "Sede principal"}
-              </Text>
-            </View>
-
-            <View style={styles.pickerSearchWrap}>
-              <TextInput
-                value={pickerQuery}
-                onChangeText={onSetPickerQuery}
-                placeholder={activePicker === "inviteRole" ? "Buscar rol..." : "Buscar sede..."}
-                placeholderTextColor={COLORS.neutral}
-                style={styles.pickerSearchInput}
-              />
-            </View>
-
-            <ScrollView contentContainerStyle={styles.pickerList}>
-              {activePicker === "inviteRole" ? (
-                filteredRoleOptions.length === 0 ? (
-                  <Text style={styles.modalHint}>No hay roles disponibles.</Text>
-                ) : (
-                  filteredRoleOptions.map((item) => {
-                    const active = form.role === item.code;
-                    return (
-                      <TouchableOpacity
-                        key={item.code}
-                        onPress={() => {
-                          onUpdateForm({ role: item.code });
-                          onClosePicker();
-                        }}
-                        style={[styles.pickerItem, active ? styles.pickerItemActive : null]}
-                      >
-                        <Text style={styles.pickerItemTitle}>{item.name}</Text>
-                      </TouchableOpacity>
-                    );
-                  })
-                )
-              ) : (
-                filteredSiteOptions.map((site) => {
-                  const active = form.siteId === site.id;
-                  return (
-                    <TouchableOpacity
-                      key={site.id}
-                      onPress={() => {
-                        onUpdateForm({ siteId: site.id });
-                        onClosePicker();
-                      }}
-                      style={[styles.pickerItem, active ? styles.pickerItemActive : null]}
-                    >
-                      <Text style={styles.pickerItemTitle}>{site.name}</Text>
-                    </TouchableOpacity>
-                  );
-                })
-              )}
-            </ScrollView>
-          </View>
-        ) : null}
+        <TeamInvitePickerOverlay
+          activePicker={activePicker}
+          insets={insets}
+          styles={styles}
+          pickerQuery={pickerQuery}
+          filteredRoleOptions={filteredRoleOptions}
+          filteredSiteOptions={filteredSiteOptions}
+          form={form}
+          onClosePicker={onClosePicker}
+          onSetPickerQuery={onSetPickerQuery}
+          onUpdateForm={onUpdateForm}
+        />
       </View>
     </Modal>
   );

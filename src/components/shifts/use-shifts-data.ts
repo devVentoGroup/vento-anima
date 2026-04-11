@@ -1,0 +1,330 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Alert } from "react-native";
+import { useFocusEffect } from "@react-navigation/native";
+
+import { supabase } from "@/lib/supabase";
+import {
+  isUpcomingShift,
+  type ShiftRow,
+} from "@/components/shifts/utils";
+import type { EmployeeOption, SiteOption } from "@/components/shifts/shift-form";
+import type { ShiftForEdit } from "@/components/shifts/EditShiftModal";
+
+function getDateOffset(days: number) {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function getShiftSortValue(shift: Pick<ShiftRow, "shift_date" | "start_time">) {
+  return new Date(`${shift.shift_date}T${shift.start_time}`).getTime();
+}
+
+export type ManagerShiftRow = ShiftRow & {
+  employee_id: string;
+  published_at?: string | null;
+  employees?: { full_name: string | null } | { full_name: string | null }[];
+};
+
+export function getEmployeeName(row: ManagerShiftRow): string {
+  const e = row.employees;
+  if (!e) return "Empleado";
+  const name = Array.isArray(e) ? e[0]?.full_name : e?.full_name;
+  return name ?? "Empleado";
+}
+
+type UseShiftsDataArgs = {
+  userId: string | undefined;
+  employeeRole: string | null | undefined;
+  employeeSiteId: string | null | undefined;
+  canManageShifts: boolean;
+};
+
+export function useShiftsData({
+  userId,
+  employeeRole,
+  employeeSiteId,
+  canManageShifts,
+}: UseShiftsDataArgs) {
+  const [rows, setRows] = useState<ShiftRow[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editingShift, setEditingShift] = useState<ShiftForEdit | null>(null);
+  const [managerEmployees, setManagerEmployees] = useState<EmployeeOption[]>([]);
+  const [managerSites, setManagerSites] = useState<SiteOption[]>([]);
+  const [managerRows, setManagerRows] = useState<ManagerShiftRow[]>([]);
+  const [expandedManagerDays, setExpandedManagerDays] = useState<Record<string, boolean>>({});
+  const [updatingShiftId, setUpdatingShiftId] = useState<string | null>(null);
+
+  const managerSiteId = useMemo(() => {
+    if (!canManageShifts) return null;
+    return employeeSiteId ?? null;
+  }, [canManageShifts, employeeSiteId]);
+
+  const loadManagerOptions = useCallback(async () => {
+    if (!userId || !canManageShifts) return;
+    try {
+      let sitesQuery = supabase
+        .from("sites")
+        .select("id, name")
+        .eq("is_active", true)
+        .order("name", { ascending: true });
+      if (employeeRole === "gerente" && managerSiteId) {
+        sitesQuery = sitesQuery.eq("id", managerSiteId);
+      }
+      const { data: sitesData } = await sitesQuery;
+      setManagerSites((sitesData as SiteOption[]) ?? []);
+
+      let empQuery = supabase
+        .from("employees")
+        .select("id, full_name")
+        .eq("is_active", true)
+        .order("full_name", { ascending: true });
+      if (employeeRole === "gerente" && managerSiteId) {
+        empQuery = empQuery.eq("site_id", managerSiteId);
+      }
+      const { data: empData } = await empQuery;
+      setManagerEmployees((empData as EmployeeOption[]) ?? []);
+    } catch (e) {
+      console.error("[SHIFTS] loadManagerOptions error:", e);
+    }
+  }, [userId, canManageShifts, employeeRole, managerSiteId]);
+
+  useEffect(() => {
+    if ((createModalVisible || editModalVisible) && canManageShifts) {
+      void loadManagerOptions();
+    }
+  }, [createModalVisible, editModalVisible, canManageShifts, loadManagerOptions]);
+
+  const loadManagedShifts = useCallback(async () => {
+    if (!userId || !canManageShifts) return;
+    try {
+      let query = supabase
+        .from("employee_shifts")
+        .select(
+          "id, employee_id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, sites(name), published_at, employees!employee_shifts_employee_id_fkey(full_name)",
+        )
+        .gte("shift_date", getDateOffset(-7))
+        .lte("shift_date", getDateOffset(30))
+        .order("shift_date", { ascending: true })
+        .order("start_time", { ascending: true });
+      if (employeeRole === "gerente" && managerSiteId) {
+        query = query.eq("site_id", managerSiteId);
+      }
+      const { data, error } = await query;
+      if (error) throw error;
+      setManagerRows((data ?? []) as ManagerShiftRow[]);
+    } catch (e) {
+      console.error("[SHIFTS] loadManagedShifts error:", e);
+      setManagerRows([]);
+    }
+  }, [userId, canManageShifts, employeeRole, managerSiteId]);
+
+  const loadShifts = useCallback(async () => {
+    if (!userId) {
+      setRows([]);
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("employee_shifts")
+        .select(
+          "id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, sites(name)",
+        )
+        .eq("employee_id", userId)
+        .not("published_at", "is", null)
+        .gte("shift_date", getDateOffset(-7))
+        .lte("shift_date", getDateOffset(30))
+        .order("shift_date", { ascending: true })
+        .order("start_time", { ascending: true });
+
+      if (error) throw error;
+      setRows(((data ?? []) as ShiftRow[]).slice());
+    } catch (error) {
+      console.error("[SHIFTS] Error loading shifts:", error);
+      setRows([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [userId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadShifts();
+      if (canManageShifts) void loadManagedShifts();
+    }, [loadShifts, canManageShifts, loadManagedShifts]),
+  );
+
+  const onRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await loadShifts();
+      if (canManageShifts) await loadManagedShifts();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [loadShifts, canManageShifts, loadManagedShifts]);
+
+  const openEditShift = useCallback((row: ManagerShiftRow) => {
+    setEditingShift({
+      id: row.id,
+      employee_id: row.employee_id,
+      site_id: row.site_id,
+      shift_date: row.shift_date,
+      start_time: row.start_time,
+      end_time: row.end_time,
+      shift_kind: row.shift_kind ?? "laboral",
+      show_end_as_close: row.show_end_as_close ?? false,
+      break_minutes: row.break_minutes ?? 0,
+      notes: row.notes,
+      published_at: row.published_at ?? null,
+    });
+    setEditModalVisible(true);
+  }, []);
+
+  const closeEditModal = useCallback(() => {
+    setEditModalVisible(false);
+    setEditingShift(null);
+  }, []);
+
+  const onEditSuccess = useCallback(() => {
+    void loadShifts();
+    void loadManagedShifts();
+  }, [loadManagedShifts, loadShifts]);
+
+  const updateShiftStatus = useCallback(
+    async (shiftId: string, status: "confirmed" | "cancelled") => {
+      setUpdatingShiftId(shiftId);
+      try {
+        const { error } = await supabase
+          .from("employee_shifts")
+          .update({ status })
+          .eq("id", shiftId);
+        if (error) throw error;
+        await loadShifts();
+        await loadManagedShifts();
+      } catch (e) {
+        console.error("[SHIFTS] updateShiftStatus error:", e);
+        Alert.alert(
+          "Error",
+          status === "cancelled"
+            ? "No se pudo cancelar el turno."
+            : "No se pudo confirmar el turno.",
+        );
+      } finally {
+        setUpdatingShiftId(null);
+      }
+    },
+    [loadManagedShifts, loadShifts],
+  );
+
+  const handleConfirmShift = useCallback(
+    (row: ManagerShiftRow) => {
+      if (row.status !== "scheduled") return;
+      void updateShiftStatus(row.id, "confirmed");
+    },
+    [updateShiftStatus],
+  );
+
+  const handleCancelShift = useCallback(
+    (row: ManagerShiftRow) => {
+      if (row.status !== "scheduled" && row.status !== "confirmed") return;
+      Alert.alert(
+        "Cancelar turno",
+        "¿Seguro que quieres cancelar este turno? El empleado ya no lo verá como programado.",
+        [
+          { text: "No", style: "cancel" },
+          {
+            text: "Sí, cancelar",
+            style: "destructive",
+            onPress: () => void updateShiftStatus(row.id, "cancelled"),
+          },
+        ],
+      );
+    },
+    [updateShiftStatus],
+  );
+
+  const upcomingRows = useMemo(() => {
+    const now = new Date();
+    return rows.filter((row) => isUpcomingShift(row, now));
+  }, [rows]);
+
+  const recentRows = useMemo(() => {
+    const now = new Date();
+    return [...rows]
+      .filter((row) => !isUpcomingShift(row, now))
+      .sort((a, b) => getShiftSortValue(b) - getShiftSortValue(a));
+  }, [rows]);
+
+  const nextShift = upcomingRows[0] ?? null;
+
+  const managerRowsByDay = useMemo(() => {
+    const map = new Map<string, ManagerShiftRow[]>();
+    for (const row of managerRows) {
+      const list = map.get(row.shift_date) ?? [];
+      list.push(row);
+      map.set(row.shift_date, list);
+    }
+    return Array.from(map.entries()).map(([shiftDate, dayRows]) => ({
+      shiftDate,
+      rows: dayRows,
+    }));
+  }, [managerRows]);
+
+  useEffect(() => {
+    if (managerRowsByDay.length === 0) {
+      setExpandedManagerDays({});
+      return;
+    }
+    setExpandedManagerDays((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const day of managerRowsByDay) {
+        if (Object.prototype.hasOwnProperty.call(prev, day.shiftDate)) {
+          next[day.shiftDate] = prev[day.shiftDate];
+        } else {
+          next[day.shiftDate] = true;
+        }
+      }
+      return next;
+    });
+  }, [managerRowsByDay]);
+
+  const toggleManagerDay = useCallback((shiftDate: string) => {
+    setExpandedManagerDays((prev) => ({ ...prev, [shiftDate]: !prev[shiftDate] }));
+  }, []);
+
+  return {
+    rows,
+    isLoading,
+    isRefreshing,
+    createModalVisible,
+    setCreateModalVisible,
+    editModalVisible,
+    editingShift,
+    managerEmployees,
+    managerSites,
+    managerRowsByDay,
+    expandedManagerDays,
+    updatingShiftId,
+    nextShift,
+    upcomingRows,
+    recentRows,
+    managerSiteId,
+    setEditModalVisible,
+    openEditShift,
+    closeEditModal,
+    onEditSuccess,
+    onRefresh,
+    handleConfirmShift,
+    handleCancelShift,
+    toggleManagerDay,
+    loadShifts,
+  };
+}

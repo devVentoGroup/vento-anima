@@ -4,80 +4,25 @@ import {
   ActivityIndicator,
   AppState,
   type AppStateStatus,
-  Platform,
   StyleSheet,
   View,
 } from "react-native"
 import { useRouter, useSegments } from "expo-router"
 import type { Session, User } from "@supabase/supabase-js"
-import * as SecureStore from "expo-secure-store"
-import * as Notifications from "expo-notifications"
-import * as Device from "expo-device"
 
+import { clearAuthCache, getAuthCacheKey, writeAuthCache } from "@/core/auth/cache"
+import { AUTH_LOAD_TIMEOUT_MS, loadEmployeeBundle as loadAuthEmployeeBundle } from "@/core/auth/employee-bundle"
+import { attachAuthSessionBootstrap } from "@/core/auth/session-bootstrap"
+import { signInWithRateLimit } from "@/core/auth/sign-in"
+import type { AuthContextType, Employee, EmployeeSite } from "@/core/auth/types"
+import { useAuthRoutingGuard } from "@/core/auth/use-auth-routing-guard"
+import { useEmployeeSitesSubscription } from "@/core/auth/use-employee-sites-subscription"
+import { useMonitoringUserSync } from "@/core/auth/use-monitoring-user-sync"
+import { usePushTokenRegistration } from "@/core/auth/use-push-token-registration"
 import { supabase } from "@/lib/supabase"
-import { setMonitoringUser } from "@/lib/monitoring"
-
-interface Employee {
-  id: string
-  fullName: string
-  alias: string | null
-  role: string
-  siteId: string | null
-  siteName: string | null
-  avatarUrl: string | null
-  isActive: boolean
-}
-
-interface EmployeeSite {
-  siteId: string
-  siteName: string
-  latitude: number | null
-  longitude: number | null
-  radiusMeters: number | null
-  type: string | null
-  siteType: string | null
-  isPrimary: boolean
-}
-
-interface AuthContextType {
-  user: User | null
-  session: Session | null
-  employee: Employee | null
-  employeeSites: EmployeeSite[]
-  selectedSiteId: string | null
-  hasPendingSiteChanges: boolean
-  isLoading: boolean
-  signIn: (email: string, password: string) => Promise<void>
-  signOut: () => Promise<void>
-  refreshEmployee: () => Promise<void>
-  consumePendingSiteChanges: () => void
-  setSelectedSite: (siteId: string | null) => Promise<void>
-}
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 const EXPO_PROJECT_ID = "2e1ba93a-039d-49e7-962d-a33ea7eaf9b3"
-const SIGN_IN_MIN_INTERVAL_MS = 2500
-
-function parseRetryAfterSeconds(input: unknown): number {
-  const anyErr = input as any
-  const message = String(anyErr?.message ?? "").toLowerCase()
-  const fromField = Number(anyErr?.retry_after_seconds)
-  if (Number.isFinite(fromField) && fromField > 0) {
-    return Math.ceil(fromField)
-  }
-
-  const secondsMatch = message.match(/(\d+)\s*(seconds|second|secs|sec|s)\b/)
-  if (secondsMatch) {
-    return Math.max(1, Number(secondsMatch[1]))
-  }
-
-  const minutesMatch = message.match(/(\d+)\s*(minutes|minute|mins|min|m)\b/)
-  if (minutesMatch) {
-    return Math.max(1, Number(minutesMatch[1]) * 60)
-  }
-
-  return 0
-}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
@@ -87,20 +32,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null)
   const [hasPendingSiteChanges, setHasPendingSiteChanges] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
-  const [routeBlocking, setRouteBlocking] = useState(true)
   const lastSessionRef = useRef<Session | null>(null)
   const router = useRouter()
   const segments = useSegments() as unknown as string[]
-  const bootSplashShownRef = useRef(false)
   // Splash al volver desde background si estuvo inactiva más de X tiempo
   const INACTIVITY_MS = 15 * 60 * 1000 // 15 minutos
-  const LOAD_TIMEOUT_MS = 8000
 
   const appStateRef = useRef<AppStateStatus>(AppState.currentState)
   const lastBackgroundAtRef = useRef<number | null>(null)
   const pendingResumeSplashRef = useRef(false)
   const lastUserIdRef = useRef<string | null>(null)
-  const pushSyncInFlightRef = useRef(false)
   const signInInFlightRef = useRef(false)
   const signInLastAttemptAtRef = useRef(0)
   const signInLastEmailRef = useRef<string | null>(null)
@@ -113,50 +54,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     segmentsRef.current = segments
   }, [segments])
 
-  useEffect(() => {
-    setMonitoringUser(
-      user
-        ? {
-            id: user.id,
-            email: user.email ?? null,
-          }
-        : null,
-    )
-  }, [user])
+  useMonitoringUserSync(user)
 
-  const cacheKey = (userId: string, suffix: string) =>
-    `auth_cache_${suffix}_${userId}`
+  const routeBlocking = useAuthRoutingGuard({
+    user,
+    isLoading,
+    segments,
+    router,
+  })
 
-  const readCache = async <T,>(key: string): Promise<T | null> => {
-    try {
-      const stored = await SecureStore.getItemAsync(key)
-      if (!stored) return null
-      return JSON.parse(stored) as T
-    } catch (err) {
-      console.warn("[AUTH] Cache read failed:", err)
-      return null
-    }
-  }
+  useEmployeeSitesSubscription({
+    userId: user?.id,
+    onPendingChange: () => {
+      setHasPendingSiteChanges(true)
+    },
+  })
 
-  const writeCache = async (key: string, value: unknown) => {
-    try {
-      await SecureStore.setItemAsync(key, JSON.stringify(value))
-    } catch (err) {
-      console.warn("[AUTH] Cache write failed:", err)
-    }
-  }
-
-  const clearCache = async (userId: string) => {
-    try {
-      await Promise.all([
-        SecureStore.deleteItemAsync(cacheKey(userId, "employee")),
-        SecureStore.deleteItemAsync(cacheKey(userId, "sites")),
-        SecureStore.deleteItemAsync(cacheKey(userId, "settings")),
-      ])
-    } catch (err) {
-      console.warn("[AUTH] Cache clear failed:", err)
-    }
-  }
+  usePushTokenRegistration({
+    userId: user?.id,
+    expoProjectId: EXPO_PROJECT_ID,
+  })
 
   const resetAuthState = () => {
     setSession(null)
@@ -179,186 +96,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const loadEmployee = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("employees")
-        .select(
-          `
-        id,
-        full_name,
-        alias,
-        role,
-        site_id,
-        is_active,
-        sites:sites!employees_site_id_fkey (name)
-      `
-        )
-        .eq("id", userId)
-        .single()
-
-      if (error) {
-        console.error("[AUTH] Error loading employee:", error)
-        console.error("[AUTH] Error details:", JSON.stringify(error, null, 2))
-        return
-      }
-
-      if (!data) {
-        console.error("[AUTH] No employee data returned for user:", userId)
-        setEmployee(null)
-        return
-      }
-
-      console.log("[AUTH] Employee loaded successfully:", data.id, data.full_name)
-      const nextEmployee = {
-        id: data.id,
-        fullName: data.full_name,
-        alias: data.alias,
-        role: data.role,
-        siteId: data.site_id,
-        siteName: (data.sites as any)?.name || null,
-        avatarUrl: null,
-        isActive: data.is_active,
-      }
-      setEmployee(nextEmployee)
-      await writeCache(cacheKey(userId, "employee"), nextEmployee)
-    } catch (err) {
-      console.error("[AUTH] Exception loading employee:", err)
-    }
-  }
-
-  const loadEmployeeSites = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("employee_sites")
-        .select(
-          `
-        site_id,
-        is_primary,
-        is_active,
-        sites:sites!employee_sites_site_id_fkey (
-          id,
-          name,
-          latitude,
-          longitude,
-          checkin_radius_meters,
-          type,
-          site_type
-        )
-      `
-        )
-        .eq("employee_id", userId)
-
-      if (error) {
-        console.error("[AUTH] Error loading employee sites:", error)
-        console.error("[AUTH] Error details:", JSON.stringify(error, null, 2))
-        return
-      }
-
-      if (!data) {
-        console.warn("[AUTH] No employee sites data returned for user:", userId)
-        setEmployeeSites([])
-        return
-      }
-
-      const activeRows = (data ?? []).filter((row: any) => row?.is_active !== false)
-
-      const nextSites = activeRows
-        .map((row) => {
-          const site = row.sites as any
-          if (!site) return null
-          return {
-            siteId: row.site_id,
-            siteName: site.name,
-            latitude: site.latitude ?? null,
-            longitude: site.longitude ?? null,
-            radiusMeters: site.checkin_radius_meters ?? null,
-            type: site.type ?? null,
-            siteType: site.site_type ?? null,
-            isPrimary: row.is_primary ?? false,
-          } as EmployeeSite
-        })
-        .filter(Boolean) as EmployeeSite[]
-
-      console.log("[AUTH] Employee sites loaded:", nextSites.length, "sites")
-      setEmployeeSites(nextSites)
-      await writeCache(cacheKey(userId, "sites"), nextSites)
-    } catch (err) {
-      console.error("[AUTH] Exception loading employee sites:", err)
-    }
-  }
-
-  const loadEmployeeSettings = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("employee_settings")
-        .select("selected_site_id")
-        .eq("employee_id", userId)
-        .maybeSingle()
-
-      if (error) {
-        console.error("[AUTH] Error loading employee settings:", error)
-        return
-      }
-
-      const nextSelected = data?.selected_site_id ?? null
-      setSelectedSiteId(nextSelected)
-      await writeCache(cacheKey(userId, "settings"), {
-        selected_site_id: nextSelected,
-      })
-    } catch (err) {
-      console.error("[AUTH] Exception loading employee settings:", err)
-    }
-  }
-
-  const withTimeout = async <T,>(
-    promise: Promise<T>,
-    ms: number,
-    label: string,
-  ): Promise<T | null> => {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null
-    return new Promise((resolve) => {
-      timeoutId = setTimeout(() => {
-        console.warn(`[AUTH] Timeout while loading ${label}`)
-        resolve(null)
-      }, ms)
-
-      promise
-        .then((value) => {
-          if (timeoutId) clearTimeout(timeoutId)
-          resolve(value)
-        })
-        .catch((err) => {
-          if (timeoutId) clearTimeout(timeoutId)
-          console.error(`[AUTH] Error loading ${label}:`, err)
-          resolve(null)
-        })
-    })
-  }
-
-  const hydrateFromCache = async (userId: string) => {
-    const [cachedEmployee, cachedSites, cachedSettings] = await Promise.all([
-      readCache<Employee>(cacheKey(userId, "employee")),
-      readCache<EmployeeSite[]>(cacheKey(userId, "sites")),
-      readCache<{ selected_site_id: string | null }>(
-        cacheKey(userId, "settings"),
-      ),
-    ])
-
-    if (cachedEmployee && cachedEmployee.id === userId) {
-      setEmployee((prev) => prev ?? cachedEmployee)
-    }
-
-    if (cachedSites && cachedSites.length) {
-      setEmployeeSites((prev) => (prev.length ? prev : cachedSites))
-    }
-
-    if (cachedSettings && cachedSettings.selected_site_id !== undefined) {
-      setSelectedSiteId((prev) =>
-        prev === null ? cachedSettings.selected_site_id : prev,
-      )
-    }
-  }
+  const clearEmployeeState = useCallback(() => {
+    setEmployee(null)
+    setEmployeeSites([])
+    setSelectedSiteId(null)
+    lastUserIdRef.current = null
+  }, [])
 
   const resetForUser = (userId: string) => {
     if (lastUserIdRef.current && lastUserIdRef.current !== userId) {
@@ -371,16 +114,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loadEmployeeBundle = async (userId: string) => {
     resetForUser(userId)
-    await hydrateFromCache(userId)
-    await Promise.all([
-      withTimeout(loadEmployee(userId), LOAD_TIMEOUT_MS, "employee"),
-      withTimeout(loadEmployeeSites(userId), LOAD_TIMEOUT_MS, "employee_sites"),
-      withTimeout(
-        loadEmployeeSettings(userId),
-        LOAD_TIMEOUT_MS,
-        "employee_settings",
-      ),
-    ])
+    await loadAuthEmployeeBundle(userId, {
+      setEmployee,
+      setEmployeeSites,
+      setSelectedSiteId,
+    }, AUTH_LOAD_TIMEOUT_MS)
   }
 
   const setSelectedSite = useCallback(async (siteId: string | null) => {
@@ -401,7 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    await writeCache(cacheKey(user.id, "settings"), {
+    await writeAuthCache(getAuthCacheKey(user.id, "settings"), {
       selected_site_id: siteId,
     })
   }, [user])
@@ -416,165 +154,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user?.id, selectedSiteId, employeeSites, setSelectedSite])
 
   useEffect(() => {
-    if (!user?.id) {
-      setHasPendingSiteChanges(false)
-      return
-    }
-
-    const channel = supabase
-      .channel(`employee-sites-${user.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "employee_sites",
-          filter: `employee_id=eq.${user.id}`,
-        },
-        () => {
-          setHasPendingSiteChanges(true)
-        }
-      )
-      .subscribe()
-
-    return () => {
-      void supabase.removeChannel(channel)
-    }
+    if (user?.id) return
+    setHasPendingSiteChanges(false)
   }, [user?.id])
 
   useEffect(() => {
-    let isActive = true
-
-    supabase.auth.getSession().then(async ({ data: { session }, error }) => {
-      if (!isActive) return
-
-      setIsLoading(true)
-
-      try {
-        if (error) {
-          console.warn("[AUTH] getSession error:", error)
-          const message = String((error as any)?.message ?? "").toLowerCase()
-          const isInvalidRefreshToken = message.includes("invalid refresh token")
-          if (isInvalidRefreshToken) {
-            await clearInvalidSession()
-            return
-          }
-
-          const fallback = lastSessionRef.current
-          if (fallback) {
-            setSession(fallback)
-            setUser(fallback.user ?? null)
-          } else {
-            resetAuthState()
-          }
-          return
-        }
-
-        setSession(session)
-        setUser(session?.user ?? null)
-
-      if (session?.user) {
-        console.log("[AUTH] Loading employee data for user:", session.user.id)
-        await loadEmployeeBundle(session.user.id)
-        console.log("[AUTH] Employee data loading completed")
-      } else {
-        setEmployee(null)
-        setEmployeeSites([])
-        setSelectedSiteId(null)
-        lastUserIdRef.current = null
-      }
-      } finally {
-        if (isActive) setIsLoading(false)
-      }
+    return attachAuthSessionBootstrap({
+      lastSessionRef,
+      setSession,
+      setUser,
+      setEmployee,
+      setEmployeeSites,
+      setSelectedSiteId,
+      setIsLoading,
+      clearInvalidSession,
+      resetAuthState,
+      clearEmployeeState,
+      loadEmployeeBundle,
     })
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, nextSession) => {
-        setIsLoading(true)
-
-        try {
-          if ((event as string) === "TOKEN_REFRESH_FAILED") {
-            console.warn("[AUTH] Token refresh failed, keeping last session")
-            await clearInvalidSession()
-            return
-          }
-
-          setSession(nextSession)
-          setUser(nextSession?.user ?? null)
-
-          if (nextSession?.user) {
-            console.log(
-              "[AUTH] Auth state changed, loading employee data for user:",
-              nextSession.user.id,
-            )
-            await loadEmployeeBundle(nextSession.user.id)
-            console.log(
-              "[AUTH] Employee data loading completed after auth state change",
-            )
-          } else {
-            setEmployee(null)
-            setEmployeeSites([])
-            setSelectedSiteId(null)
-            lastUserIdRef.current = null
-          }
-        } finally {
-          setIsLoading(false)
-        }
-      }
-    )
-
-    return () => {
-      isActive = false
-      subscription.unsubscribe()
-    }
-  }, [])
+  }, [clearEmployeeState])
 
   useEffect(() => {
     if (session) lastSessionRef.current = session
   }, [session])
-
-  useEffect(() => {
-    const seg0 = segments[0] ?? ""
-    const seg1 = segments[1] ?? ""
-
-    const inAuthGroup = seg0 === "(auth)"
-    const isSplashRoute = inAuthGroup && seg1 === "splash"
-
-    // Mientras resolvemos sesión, bloquea UI para evitar “flash” de rutas cacheadas
-    if (isLoading) {
-      if (!routeBlocking) setRouteBlocking(true)
-      return
-    }
-
-    // 1) En cada arranque del runtime, forzamos pasar por /splash una vez
-    if (!bootSplashShownRef.current) {
-      bootSplashShownRef.current = true
-      if (!isSplashRoute) {
-        setRouteBlocking(true)
-        router.replace("/splash")
-        return
-      }
-      if (routeBlocking) setRouteBlocking(false)
-      return
-    }
-
-    // 2) Si no hay usuario y estamos fuera del grupo auth, volvemos a splash
-    if (!user && !inAuthGroup) {
-      setRouteBlocking(true)
-      router.replace("/splash")
-      return
-    }
-
-    // 3) Si hay usuario y estamos en auth (excepto splash), mandamos a home
-    if (user && inAuthGroup && !isSplashRoute) {
-      setRouteBlocking(true)
-      router.replace("/home")
-      return
-    }
-
-    // Si estamos en splash o ya estamos en la ruta correcta, desbloquear
-    if (routeBlocking) setRouteBlocking(false)
-  }, [user, isLoading, segments, router, routeBlocking])
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (nextState) => {
@@ -620,13 +222,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [router, isLoading])
 
   useEffect(() => {
-    if (!routeBlocking || isLoading) return
-    const timer = setTimeout(() => {
-      setRouteBlocking(false)
-    }, 12000)
-    return () => clearTimeout(timer)
-  }, [routeBlocking, isLoading])
-  useEffect(() => {
     if (isLoading) return
     if (!pendingResumeSplashRef.current) return
 
@@ -642,99 +237,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [isLoading, router])
 
-  useEffect(() => {
-    const syncPushToken = async () => {
-      if (!user?.id) return
-      if (!Device.isDevice) return
-      if (pushSyncInFlightRef.current) return
-
-      pushSyncInFlightRef.current = true
-      try {
-        const permissions = await Notifications.getPermissionsAsync()
-        if (permissions.status !== "granted") return
-
-        const tokenResult = await Notifications.getExpoPushTokenAsync({
-          projectId: EXPO_PROJECT_ID,
-        })
-        const token = tokenResult.data
-        if (!token) return
-
-        await supabase.functions.invoke("register-push-token", {
-          body: {
-            token,
-            platform: Platform.OS,
-          },
-        })
-      } catch (err) {
-        console.warn("[AUTH] Push token sync skipped:", err)
-      } finally {
-        pushSyncInFlightRef.current = false
-      }
-    }
-
-    void syncPushToken()
-  }, [user?.id])
-
   const signIn = async (email: string, password: string) => {
-    const normalizedEmail = email.trim().toLowerCase()
-    const now = Date.now()
-    if (!normalizedEmail || !password) {
-      const invalidError: any = new Error("Credenciales incompletas.")
-      invalidError.status = 400
-      throw invalidError
-    }
-
-    if (signInInFlightRef.current) {
-      const lockedError: any = new Error("Inicio de sesión en curso. Espera un momento.")
-      lockedError.status = 429
-      lockedError.retry_after_seconds = 2
-      throw lockedError
-    }
-
-    if (now < signInCooldownUntilRef.current) {
-      const secondsLeft = Math.max(1, Math.ceil((signInCooldownUntilRef.current - now) / 1000))
-      const cooldownError: any = new Error(`Demasiados intentos. Espera ${secondsLeft} segundos.`)
-      cooldownError.status = 429
-      cooldownError.retry_after_seconds = secondsLeft
-      throw cooldownError
-    }
-
-    const isRapidDuplicate =
-      signInLastEmailRef.current === normalizedEmail &&
-      now - signInLastAttemptAtRef.current < SIGN_IN_MIN_INTERVAL_MS
-    if (isRapidDuplicate) {
-      const waitSeconds = Math.max(
-        1,
-        Math.ceil((SIGN_IN_MIN_INTERVAL_MS - (now - signInLastAttemptAtRef.current)) / 1000)
-      )
-      const duplicateError: any = new Error(`Espera ${waitSeconds} segundos antes de reintentar.`)
-      duplicateError.status = 429
-      duplicateError.retry_after_seconds = waitSeconds
-      throw duplicateError
-    }
-
-    signInInFlightRef.current = true
-    signInLastAttemptAtRef.current = now
-    signInLastEmailRef.current = normalizedEmail
-
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: normalizedEmail,
-        password,
-      })
-
-      if (error) {
-        const retrySeconds = parseRetryAfterSeconds(error)
-        if (retrySeconds > 0) {
-          signInCooldownUntilRef.current = Date.now() + retrySeconds * 1000
-        }
-        throw error
-      }
-
-      signInCooldownUntilRef.current = 0
-    } finally {
-      signInInFlightRef.current = false
-    }
+    await signInWithRateLimit(
+      email,
+      password,
+      {
+        signInInFlightRef,
+        signInLastAttemptAtRef,
+        signInLastEmailRef,
+        signInCooldownUntilRef,
+      },
+      ({ email: normalizedEmail, password: nextPassword }) =>
+        supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password: nextPassword,
+        }),
+    )
   }
 
   const signOut = async () => {
@@ -746,7 +264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setHasPendingSiteChanges(false)
     lastUserIdRef.current = null
     if (userId) {
-      await clearCache(userId)
+      await clearAuthCache(userId)
     }
   }
 

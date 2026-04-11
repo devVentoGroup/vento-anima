@@ -7,7 +7,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -18,30 +17,10 @@ import { CONTENT_MAX_WIDTH } from "@/constants/layout";
 import { useShiftPolicy } from "@/hooks/use-shift-policy";
 import { supabase } from "@/lib/supabase";
 import { getUserFacingAuthError } from "@/utils/error-messages";
-
-export type SiteOption = { id: string; name: string };
-export type EmployeeOption = { id: string; full_name: string | null };
-
-type FormState = {
-  employeeId: string;
-  siteId: string;
-  shiftDate: string;
-  startTime: string;
-  endTime: string;
-  breakMinutes: string;
-  notes: string;
-  publishNow: boolean;
-  showEndAsClose: boolean;
-  shiftKind: "laboral" | "descanso";
-};
-
-const today = () => new Date().toISOString().slice(0, 10);
-
-function toTimeInput(v: string) {
-  if (!v) return "";
-  const part = v.slice(0, 5);
-  return part.length === 5 ? part : v;
-}
+import { ShiftFormFields } from "./ShiftFormFields";
+import { ShiftOptionToggles } from "./ShiftOptionToggles";
+import type { EmployeeOption, ShiftFormState, SiteOption } from "./shift-form";
+import { today, validateShiftForm } from "./shift-form";
 
 type Props = {
   visible: boolean;
@@ -60,7 +39,7 @@ export function CreateShiftModal({
   sites,
   currentUserId,
 }: Props) {
-  const [form, setForm] = useState<FormState>({
+  const [form, setForm] = useState<ShiftFormState>({
     employeeId: "",
     siteId: "",
     shiftDate: today(),
@@ -102,26 +81,11 @@ export function CreateShiftModal({
   }, [onClose, resetForm]);
 
   const validate = (): string | null => {
-    if (!form.employeeId) return "Elige un empleado.";
-    if (!form.siteId) return "Elige una sede.";
-    if (!form.shiftDate.trim()) return "Indica la fecha.";
-    if (!form.startTime.trim()) return "Indica la hora de inicio.";
-    if (!form.endTime.trim()) return "Indica la hora de fin.";
-    const start = form.startTime.slice(0, 5);
-    const end = form.endTime.slice(0, 5);
-    if (end <= start) return "La hora de fin debe ser posterior a la de inicio.";
-    const breakM = Math.max(0, parseInt(form.breakMinutes, 10) || 0);
-    if (breakM > 480) return "El descanso no puede superar 8 horas.";
-    if (shiftPolicyLoaded && shiftPolicy.maxShiftHoursPerDay > 0) {
-      const startMs = new Date(`${form.shiftDate}T${start}`).getTime();
-      const endMs = new Date(`${form.shiftDate}T${end}`).getTime();
-      const durationMinutes = Math.max(0, Math.round((endMs - startMs) / 60000) - breakM);
-      const durationHours = durationMinutes / 60;
-      if (durationHours > shiftPolicy.maxShiftHoursPerDay) {
-        return `El turno no puede superar ${shiftPolicy.maxShiftHoursPerDay} horas (según política).`;
-      }
-    }
-    return null;
+    return validateShiftForm({
+      form,
+      maxShiftHoursPerDay: shiftPolicy.maxShiftHoursPerDay,
+      policyLoaded: shiftPolicyLoaded,
+    });
   };
 
   const handleSubmit = async () => {
@@ -201,127 +165,18 @@ export function CreateShiftModal({
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
           >
-            <Text style={styles.label}>Empleado</Text>
-            <View style={styles.chipRow}>
-              {employees.map((emp) => (
-                <TouchableOpacity
-                  key={emp.id}
-                  onPress={() => setForm((p) => ({ ...p, employeeId: emp.id }))}
-                  style={[styles.chip, form.employeeId === emp.id && styles.chipActive]}
-                >
-                  <Text
-                    style={[styles.chipText, form.employeeId === emp.id && styles.chipTextActive]}
-                    numberOfLines={1}
-                  >
-                    {emp.full_name || "Sin nombre"}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            {employees.length === 0 ? (
-              <Text style={styles.hint}>No hay empleados en tu sede.</Text>
-            ) : null}
-
-            <Text style={styles.label}>Sede</Text>
-            <View style={styles.chipRow}>
-              {sites.map((s) => (
-                <TouchableOpacity
-                  key={s.id}
-                  onPress={() => setForm((p) => ({ ...p, siteId: s.id }))}
-                  style={[styles.chip, form.siteId === s.id && styles.chipActive]}
-                >
-                  <Text style={[styles.chipText, form.siteId === s.id && styles.chipTextActive]}>{s.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <Text style={styles.label}>Fecha</Text>
-            <TextInput
-              value={form.shiftDate}
-              onChangeText={(v) => setForm((p) => ({ ...p, shiftDate: v }))}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={COLORS.neutral}
-              style={styles.input}
+            <ShiftFormFields
+              form={form}
+              employees={employees}
+              sites={sites}
+              onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
             />
 
-            <Text style={styles.label}>Hora inicio</Text>
-            <TextInput
-              value={form.startTime}
-              onChangeText={(v) => setForm((p) => ({ ...p, startTime: toTimeInput(v) }))}
-              placeholder="08:00"
-              placeholderTextColor={COLORS.neutral}
-              style={styles.input}
+            <ShiftOptionToggles
+              form={form}
+              publishLabel="Publicar ya (visible para el empleado)"
+              onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
             />
-
-            <Text style={styles.label}>Hora fin</Text>
-            <TextInput
-              value={form.endTime}
-              onChangeText={(v) => setForm((p) => ({ ...p, endTime: toTimeInput(v) }))}
-              placeholder="14:00"
-              placeholderTextColor={COLORS.neutral}
-              style={styles.input}
-            />
-
-            <Text style={styles.label}>Descanso (min)</Text>
-            <TextInput
-              value={form.breakMinutes}
-              onChangeText={(v) => setForm((p) => ({ ...p, breakMinutes: v }))}
-              placeholder="0"
-              placeholderTextColor={COLORS.neutral}
-              keyboardType="number-pad"
-              style={styles.input}
-            />
-
-            <Text style={styles.label}>Notas (opcional)</Text>
-            <TextInput
-              value={form.notes}
-              onChangeText={(v) => setForm((p) => ({ ...p, notes: v }))}
-              placeholder="Notas del turno"
-              placeholderTextColor={COLORS.neutral}
-              style={[styles.input, styles.inputMultiline]}
-              multiline
-            />
-
-            <TouchableOpacity
-              onPress={() => setForm((p) => ({ ...p, publishNow: !p.publishNow }))}
-              style={styles.checkRow}
-            >
-              <Ionicons
-                name={form.publishNow ? "checkbox" : "square-outline"}
-                size={22}
-                color={form.publishNow ? COLORS.accent : COLORS.neutral}
-              />
-              <Text style={styles.checkLabel}>Publicar ya (visible para el empleado)</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setForm((p) => ({ ...p, showEndAsClose: !p.showEndAsClose }))}
-              style={styles.checkRow}
-            >
-              <Ionicons
-                name={form.showEndAsClose ? "checkbox" : "square-outline"}
-                size={22}
-                color={form.showEndAsClose ? COLORS.accent : COLORS.neutral}
-              />
-              <Text style={styles.checkLabel}>Mostrar salida como "Cierre" al empleado</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() =>
-                setForm((p) => ({
-                  ...p,
-                  shiftKind: p.shiftKind === "descanso" ? "laboral" : "descanso",
-                }))
-              }
-              style={styles.checkRow}
-            >
-              <Ionicons
-                name={form.shiftKind === "descanso" ? "checkbox" : "square-outline"}
-                size={22}
-                color={form.shiftKind === "descanso" ? COLORS.accent : COLORS.neutral}
-              />
-              <Text style={styles.checkLabel}>Marcar como turno de descanso (no laboral)</Text>
-            </TouchableOpacity>
 
             <View style={styles.actions}>
               <TouchableOpacity onPress={handleClose} style={styles.btnSecondary}>
@@ -377,67 +232,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 12,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: COLORS.text,
-    marginTop: 12,
-    marginBottom: 6,
-  },
-  hint: {
-    fontSize: 12,
-    color: COLORS.neutral,
-    marginTop: 4,
-  },
-  chipRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.porcelainAlt,
-  },
-  chipActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: "rgba(226, 0, 106, 0.12)",
-  },
-  chipText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: COLORS.text,
-  },
-  chipTextActive: {
-    color: COLORS.accent,
-  },
-  input: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.porcelainAlt,
-    padding: 12,
-    fontSize: 15,
-    color: COLORS.text,
-  },
-  inputMultiline: {
-    minHeight: 72,
-    textAlignVertical: "top",
-  },
-  checkRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 16,
-  },
-  checkLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: COLORS.text,
   },
   actions: {
     flexDirection: "row",

@@ -1,4 +1,6 @@
 import { StyleSheet, Text, View } from "react-native";
+
+import { ANIMA_BRAND } from "@/brand/anima/config/app-brand"
 import { AnimaLogo } from "@/components/anima-logo";
 import { COLORS } from "@/constants/colors";
 
@@ -14,8 +16,8 @@ export default function LoginHeader({ logoSize = 180 }: LoginHeaderProps) {
         <AnimaLogo size={logoSize} />
       </View>
 
-      <Text style={styles.title}>ANIMA</Text>
-      <Text style={styles.subtitle}>Control de Asistencia</Text>
+      <Text style={styles.title}>{ANIMA_BRAND.appName}</Text>
+      <Text style={styles.subtitle}>{ANIMA_BRAND.appSubtitle}</Text>
     </View>
   );
 }

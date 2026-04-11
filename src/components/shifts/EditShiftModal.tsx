@@ -18,7 +18,7 @@ import { CONTENT_MAX_WIDTH } from "@/constants/layout";
 import { useShiftPolicy } from "@/hooks/use-shift-policy";
 import { supabase } from "@/lib/supabase";
 import { getUserFacingAuthError } from "@/utils/error-messages";
-import type { EmployeeOption, SiteOption } from "./CreateShiftModal";
+import type { EmployeeOption, SiteOption } from "./shift-form";
 
 export type ShiftForEdit = {
   id: string;

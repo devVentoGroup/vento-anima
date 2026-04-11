@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -11,7 +11,6 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
 import {
@@ -20,42 +19,13 @@ import {
 } from "@/constants/layout";
 import ContactWorkerModal, { type WorkerOption } from "@/components/support/ContactWorkerModal";
 import SupportTicketModal from "@/components/support/SupportTicketModal";
+import { useSupportActions } from "@/components/support/use-support-actions";
+import { useSupportData } from "@/components/support/use-support-data";
 import { SUPPORT_UI } from "@/components/support/ui";
-import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
+import type { FaqItem, TicketStatus } from "@/components/support/types";
 
 const UI = SUPPORT_UI;
-
-type TicketStatus = "open" | "in_progress" | "resolved" | "closed";
-
-type TicketRow = {
-  id: string;
-  title: string;
-  description: string | null;
-  status: TicketStatus;
-  category: string;
-  site_id: string | null;
-  created_by: string;
-  assigned_to: string | null;
-  created_at: string;
-  updated_at: string;
-  siteName: string | null;
-};
-
-type MessageRow = {
-  id: string;
-  ticket_id: string;
-  author_id: string;
-  body: string;
-  created_at: string;
-};
-
-type FaqItem = {
-  key: string;
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  content: string[];
-};
 
 const FAQ_ITEMS: FaqItem[] = [
   {
@@ -120,25 +90,6 @@ const FAQ_ITEMS: FaqItem[] = [
   },
 ];
 
-function normalizeTicket(
-  raw: any,
-): TicketRow {
-  const siteRelation = Array.isArray(raw.sites) ? raw.sites[0] : raw.sites;
-  return {
-    id: raw.id,
-    title: raw.title,
-    description: raw.description ?? null,
-    status: raw.status as TicketStatus,
-    category: raw.category,
-    site_id: raw.site_id ?? null,
-    created_by: raw.created_by,
-    assigned_to: raw.assigned_to ?? null,
-    created_at: raw.created_at,
-    updated_at: raw.updated_at,
-    siteName: siteRelation?.name ?? null,
-  };
-}
-
 function statusMeta(status: TicketStatus) {
   if (status === "open") {
     return { label: "Abierto", color: COLORS.accent, bg: "rgba(226, 0, 106, 0.10)" };
@@ -169,320 +120,59 @@ export default function SupportScreen() {
   const role = employee?.role ?? null;
   const canContactWorker = Boolean(role && MANAGEMENT_ROLES.has(role));
   const managerSiteId = role === "gerente" ? (employee?.siteId ?? selectedSiteId ?? null) : null;
-
-  const [isTicketOpen, setIsTicketOpen] = useState(false);
-  const [ticketTitle, setTicketTitle] = useState("");
-  const [ticketMessage, setTicketMessage] = useState("");
-  const [isCreatingTicket, setIsCreatingTicket] = useState(false);
-
-  const [workersForContact, setWorkersForContact] = useState<WorkerOption[]>([]);
-  const [isLoadingWorkers, setIsLoadingWorkers] = useState(false);
-  const [contactModalVisible, setContactModalVisible] = useState(false);
-  const [contactMode, setContactMode] = useState<"aviso" | "conversacion">("aviso");
-  const [selectedWorker, setSelectedWorker] = useState<WorkerOption | null>(null);
-  const [contactMessage, setContactMessage] = useState("");
-  const [isSubmittingContact, setIsSubmittingContact] = useState(false);
-
-  const [tickets, setTickets] = useState<TicketRow[]>([]);
-  const [isLoadingTickets, setIsLoadingTickets] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
-
-  const [messages, setMessages] = useState<MessageRow[]>([]);
-  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
-  const [newMessage, setNewMessage] = useState("");
-  const [isSendingMessage, setIsSendingMessage] = useState(false);
-
   const [openFaqKey, setOpenFaqKey] = useState<string | null>(null);
-
-  const selectedTicket = useMemo(
-    () => tickets.find((item) => item.id === selectedTicketId) ?? null,
-    [tickets, selectedTicketId],
-  );
-
-  const loadWorkersForContact = useCallback(async () => {
-    if (!user?.id || !canContactWorker) return;
-    if (role === "gerente" && !managerSiteId) {
-      setWorkersForContact([]);
-      return;
-    }
-    setIsLoadingWorkers(true);
-    try {
-      let query = supabase
-        .from("employees")
-        .select("id, full_name, alias")
-        .eq("is_active", true)
-        .order("full_name", { ascending: true });
-      if (role === "gerente" && managerSiteId) {
-        query = query.eq("site_id", managerSiteId);
-      }
-      const { data, error } = await query;
-      if (error) throw error;
-      setWorkersForContact((data as WorkerOption[]) ?? []);
-    } catch (err) {
-      console.error("[SUPPORT] Workers load error:", err);
-      Alert.alert("Soporte", "No se pudieron cargar los trabajadores.");
-      setWorkersForContact([]);
-    } finally {
-      setIsLoadingWorkers(false);
-    }
-  }, [user?.id, canContactWorker, role, managerSiteId]);
-
-  const loadTickets = useCallback(async () => {
-    if (!user?.id) return;
-    setIsLoadingTickets(true);
-    try {
-      const { data, error } = await supabase
-        .from("support_tickets")
-        .select(
-          "id, title, description, status, category, site_id, created_by, assigned_to, created_at, updated_at, sites(name)",
-        )
-        .order("updated_at", { ascending: false });
-
-      if (error) throw error;
-      const normalized = ((data as any[]) ?? []).map(normalizeTicket);
-      setTickets(normalized);
-      setSelectedTicketId((prev) => {
-        if (prev && normalized.some((item) => item.id === prev)) return prev;
-        return normalized[0]?.id ?? null;
-      });
-    } catch (err) {
-      console.error("[SUPPORT] Tickets load error:", err);
-      Alert.alert("Soporte", "No se pudieron cargar los tickets.");
-    } finally {
-      setIsLoadingTickets(false);
-    }
-  }, [user?.id]);
-
-  const loadMessages = useCallback(async (ticketId: string | null) => {
-    if (!ticketId) {
-      setMessages([]);
-      return;
-    }
-    setIsLoadingMessages(true);
-    try {
-      const { data, error } = await supabase
-        .from("support_messages")
-        .select("id, ticket_id, author_id, body, created_at")
-        .eq("ticket_id", ticketId)
-        .order("created_at", { ascending: true });
-      if (error) throw error;
-      setMessages((data as MessageRow[]) ?? []);
-    } catch (err) {
-      console.error("[SUPPORT] Messages load error:", err);
-      Alert.alert("Soporte", "No se pudieron cargar los mensajes del ticket.");
-    } finally {
-      setIsLoadingMessages(false);
-    }
-  }, []);
-
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    await Promise.all([
-      loadTickets(),
-      loadMessages(selectedTicketId),
-    ]);
-    setIsRefreshing(false);
-  };
-
-  const submitTicket = async () => {
-    if (!user?.id) return;
-    if (!ticketTitle.trim()) {
-      Alert.alert("Soporte", "Escribe un asunto para el ticket.");
-      return;
-    }
-    if (!ticketMessage.trim()) {
-      Alert.alert("Soporte", "Escribe el detalle antes de enviar.");
-      return;
-    }
-
-    setIsCreatingTicket(true);
-    try {
-      const siteId = employee?.siteId ?? selectedSiteId ?? null;
-      const { data: ticketRow, error: ticketError } = await supabase
-        .from("support_tickets")
-        .insert({
-          created_by: user.id,
-          site_id: siteId,
-          category: "attendance",
-          title: ticketTitle.trim(),
-          description: ticketMessage.trim(),
-          status: "open",
-        })
-        .select("id")
-        .single();
-
-      if (ticketError || !ticketRow?.id) throw ticketError ?? new Error("Ticket creation failed");
-
-      const { error: messageError } = await supabase
-        .from("support_messages")
-        .insert({
-          ticket_id: ticketRow.id,
-          author_id: user.id,
-          body: ticketMessage.trim(),
-        });
-      if (messageError) throw messageError;
-
-      setTicketTitle("");
-      setTicketMessage("");
-      setIsTicketOpen(false);
-      await loadTickets();
-      setSelectedTicketId(ticketRow.id);
-      await loadMessages(ticketRow.id);
-      Alert.alert("Soporte", "Ticket creado y chat habilitado.");
-    } catch (err) {
-      console.error("[SUPPORT] Ticket create error:", err);
-      Alert.alert("Soporte", "No se pudo crear el ticket.");
-    } finally {
-      setIsCreatingTicket(false);
-    }
-  };
-
-  const sendMessage = async () => {
-    if (!user?.id || !selectedTicketId) return;
-    const body = newMessage.trim();
-    if (!body) return;
-
-    setIsSendingMessage(true);
-    try {
-      const { error: insertError } = await supabase
-        .from("support_messages")
-        .insert({
-          ticket_id: selectedTicketId,
-          author_id: user.id,
-          body,
-        });
-      if (insertError) throw insertError;
-
-      await supabase
-        .from("support_tickets")
-        .update({ updated_at: new Date().toISOString() })
-        .eq("id", selectedTicketId);
-
-      setNewMessage("");
-      await Promise.all([loadMessages(selectedTicketId), loadTickets()]);
-    } catch (err) {
-      console.error("[SUPPORT] Send message error:", err);
-      Alert.alert("Soporte", "No se pudo enviar el mensaje.");
-    } finally {
-      setIsSendingMessage(false);
-    }
-  };
-
-  const submitContactWorker = async () => {
-    if (!user?.id || !selectedWorker) return;
-    if (contactMode === "aviso" && !contactMessage.trim()) {
-      Alert.alert("Soporte", "Escribe el aviso antes de enviar.");
-      return;
-    }
-    const displayName = selectedWorker.full_name ?? selectedWorker.alias ?? selectedWorker.id;
-    const title =
-      contactMode === "aviso"
-        ? `Aviso para ${displayName}`
-        : `Conversación con ${displayName}`;
-    const body = contactMessage.trim() || (contactMode === "conversacion" ? "(Conversación iniciada)" : "");
-
-    setIsSubmittingContact(true);
-    try {
-      const siteId = employee?.siteId ?? selectedSiteId ?? null;
-      const { data: ticketRow, error: ticketError } = await supabase
-        .from("support_tickets")
-        .insert({
-          created_by: user.id,
-          site_id: siteId,
-          target_employee_id: selectedWorker.id,
-          category: "attendance",
-          title,
-          description: body,
-          status: "open",
-        })
-        .select("id")
-        .single();
-
-      if (ticketError || !ticketRow?.id) throw ticketError ?? new Error("Ticket creation failed");
-
-      if (body) {
-        const { error: messageError } = await supabase.from("support_messages").insert({
-          ticket_id: ticketRow.id,
-          author_id: user.id,
-          body,
-        });
-        if (messageError) throw messageError;
-      }
-
-      setSelectedWorker(null);
-      setContactMessage("");
-      setContactModalVisible(false);
-      await loadTickets();
-      setSelectedTicketId(ticketRow.id);
-      await loadMessages(ticketRow.id);
-      Alert.alert(
-        "Soporte",
-        contactMode === "aviso"
-          ? "Aviso enviado. El trabajador lo verá en Soporte."
-          : "Conversación iniciada. El trabajador la verá en Soporte.",
-      );
-    } catch (err) {
-      console.error("[SUPPORT] Contact worker ticket error:", err);
-      Alert.alert("Soporte", "No se pudo crear el ticket.");
-    } finally {
-      setIsSubmittingContact(false);
-    }
-  };
-
-  useFocusEffect(
-    useCallback(() => {
-      void loadTickets();
-    }, [loadTickets]),
-  );
-
-  useEffect(() => {
-    if (!selectedTicketId) {
-      setMessages([]);
-      return;
-    }
-    void loadMessages(selectedTicketId);
-  }, [selectedTicketId, loadMessages]);
-
-  useEffect(() => {
-    if (contactModalVisible && canContactWorker) {
-      void loadWorkersForContact();
-    }
-  }, [contactModalVisible, canContactWorker, loadWorkersForContact]);
-
-  useEffect(() => {
-    if (!user?.id) return;
-
-    const channel = supabase
-      .channel(`support-live-${user.id}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "support_tickets" },
-        () => {
-          void loadTickets();
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "support_messages" },
-        (payload) => {
-          const ticketId =
-            ((payload.new as any)?.ticket_id as string | undefined) ??
-            ((payload.old as any)?.ticket_id as string | undefined) ??
-            null;
-          if (ticketId && ticketId === selectedTicketId) {
-            void loadMessages(ticketId);
-          }
-          void loadTickets();
-        },
-      )
-      .subscribe();
-
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [user?.id, selectedTicketId, loadMessages, loadTickets]);
-
+  const [contactModalVisible, setContactModalVisible] = useState(false);
+  const {
+    workersForContact,
+    isLoadingWorkers,
+    tickets,
+    isLoadingTickets,
+    isRefreshing,
+    selectedTicketId,
+    setSelectedTicketId,
+    selectedTicket,
+    messages,
+    isLoadingMessages,
+    loadTickets,
+    loadMessages,
+    handleRefresh,
+  } = useSupportData({
+    userId: user?.id,
+    canContactWorker,
+    role,
+    managerSiteId,
+    contactModalVisible,
+  });
+  const {
+    isTicketOpen,
+    setIsTicketOpen,
+    ticketTitle,
+    setTicketTitle,
+    ticketMessage,
+    setTicketMessage,
+    isCreatingTicket,
+    contactMode,
+    setContactMode,
+    selectedWorker,
+    setSelectedWorker,
+    contactMessage,
+    setContactMessage,
+    isSubmittingContact,
+    newMessage,
+    setNewMessage,
+    isSendingMessage,
+    submitTicket,
+    sendMessage,
+    submitContactWorker,
+  } = useSupportActions({
+    userId: user?.id,
+    employeeSiteId: employee?.siteId,
+    selectedSiteId: selectedSiteId ?? null,
+    selectedTicketId,
+    loadTickets,
+    loadMessages,
+    setSelectedTicketId,
+  });
   return (
     <View style={styles.root}>
       <ScrollView

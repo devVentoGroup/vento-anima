@@ -13,6 +13,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated"
 
+import { ANIMA_BRAND } from "@/brand/anima/config/app-brand"
 import { AnimaLogo } from "@/components/anima-logo"
 import { COLORS } from "@/constants/colors"
 
@@ -204,11 +205,11 @@ export default function SplashScreen({ isAppReady, minDurationMs, onFinish }: Sp
             </View>
           </View>
 
-          <Text style={styles.title}>ANIMA</Text>
+          <Text style={styles.title}>{ANIMA_BRAND.appName}</Text>
 
           <View style={styles.subtitleRow}>
             <View style={styles.subtitleLine} />
-            <Text style={styles.subtitle}>BIENVENIDO</Text>
+            <Text style={styles.subtitle}>{ANIMA_BRAND.welcomeLabel}</Text>
             <View style={styles.subtitleLine} />
           </View>
 
@@ -229,7 +230,7 @@ export default function SplashScreen({ isAppReady, minDurationMs, onFinish }: Sp
         </Animated.View>
 
         <Animated.View style={[styles.footer, { bottom: insets.bottom + 18 }, contentStyle]}>
-          <Text style={styles.footerText}>Una Solución de Vento Group SAS</Text>
+          <Text style={styles.footerText}>{ANIMA_BRAND.companyFooter}</Text>
         </Animated.View>
       </SafeAreaView>
     </View>
