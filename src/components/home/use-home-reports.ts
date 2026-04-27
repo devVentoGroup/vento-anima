@@ -10,6 +10,7 @@ import type {
   ReportSiteOption,
   ReportSummaryResponse,
 } from "@/components/home/report-types"
+import { ANIMA_COPY } from "@/brand/anima/copy/app-copy"
 import { PALETTE } from "@/components/home/theme"
 import { supabase } from "@/lib/supabase"
 
@@ -404,7 +405,7 @@ export function useHomeReports({
       }
       await MailComposer.composeAsync({
         recipients: [userEmail],
-        subject: "Reporte de asistencia ANIMA",
+        subject: ANIMA_COPY.attendanceReportSubject,
         body: `Adjunto encuentras el reporte de asistencia (${reportScopeLabel}).`,
         attachments: [uri],
       })

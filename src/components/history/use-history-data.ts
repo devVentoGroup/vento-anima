@@ -4,35 +4,11 @@ import { useFocusEffect } from "@react-navigation/native";
 
 import { supabase } from "@/lib/supabase";
 import type {
-  AttendanceBreak,
   AttendanceLog,
   DerivedLog,
 } from "@/components/history/types";
 
 export type RangeMode = "week" | "month";
-
-function overlapMinutes(
-  intervalStartMs: number,
-  intervalEndMs: number,
-  breaks: AttendanceBreak[],
-) {
-  if (intervalEndMs <= intervalStartMs) return 0;
-  let total = 0;
-
-  breaks.forEach((item) => {
-    const breakStart = new Date(item.started_at).getTime();
-    const breakEnd = new Date(item.ended_at ?? new Date().toISOString()).getTime();
-    if (!Number.isFinite(breakStart) || !Number.isFinite(breakEnd)) return;
-
-    const start = Math.max(intervalStartMs, breakStart);
-    const end = Math.min(intervalEndMs, breakEnd);
-    if (end > start) {
-      total += (end - start) / 60000;
-    }
-  });
-
-  return total;
-}
 
 function getRange(anchor: Date, mode: RangeMode) {
   const start = new Date(anchor);
@@ -101,31 +77,19 @@ export function useHistoryData({ userId }: UseHistoryDataArgs) {
       const startIso = range.start.toISOString();
       const endIso = range.end.toISOString();
 
-      const [{ data: logsData, error: logsError }, { data: breaksData, error: breaksError }] =
-        await Promise.all([
-          supabase
-            .from("attendance_logs")
-            .select(
-              "id, action, occurred_at, site_id, latitude, longitude, accuracy_meters, notes, sites(name)",
-            )
-            .eq("employee_id", userId)
-            .gte("occurred_at", startIso)
-            .lte("occurred_at", endIso)
-            .order("occurred_at", { ascending: true }),
-          supabase
-            .from("attendance_breaks")
-            .select("started_at, ended_at")
-            .eq("employee_id", userId)
-            .lte("started_at", endIso)
-            .or(`ended_at.is.null,ended_at.gte.${startIso}`)
-            .order("started_at", { ascending: true }),
-        ]);
+      const { data: logsData, error: logsError } = await supabase
+        .from("attendance_logs")
+        .select(
+          "id, action, occurred_at, site_id, latitude, longitude, accuracy_meters, notes, sites(name)",
+        )
+        .eq("employee_id", userId)
+        .gte("occurred_at", startIso)
+        .lte("occurred_at", endIso)
+        .order("occurred_at", { ascending: true });
 
       if (logsError) throw logsError;
-      if (breaksError) throw breaksError;
 
       const logs = (logsData ?? []) as AttendanceLog[];
-      const breaks = (breaksData ?? []) as AttendanceBreak[];
       const derived: DerivedLog[] = [];
       let pendingIndex: number | null = null;
 
@@ -137,7 +101,6 @@ export function useHistoryData({ userId }: UseHistoryDataArgs) {
               ...derived[pendingIndex],
               statusLabel: "Sin salida",
               durationMinutes: null,
-              breakMinutes: null,
             };
           }
           const index = derived.length;
@@ -146,7 +109,6 @@ export function useHistoryData({ userId }: UseHistoryDataArgs) {
             dayKey,
             statusLabel: "En curso",
             durationMinutes: null,
-            breakMinutes: null,
           });
           pendingIndex = index;
           return;
@@ -157,14 +119,12 @@ export function useHistoryData({ userId }: UseHistoryDataArgs) {
           const start = new Date(pending.occurred_at).getTime();
           const end = new Date(log.occurred_at).getTime();
           const grossMinutes = (end - start) / 60000;
-          const breakMinutes = overlapMinutes(start, end, breaks);
-          const netMinutes = Math.max(0, grossMinutes - breakMinutes);
+          const netMinutes = Math.max(0, grossMinutes);
 
           derived[pendingIndex] = {
             ...pending,
             statusLabel: "Salida registrada",
             durationMinutes: netMinutes,
-            breakMinutes,
           };
 
           derived.push({
@@ -172,7 +132,6 @@ export function useHistoryData({ userId }: UseHistoryDataArgs) {
             dayKey,
             statusLabel: "Turno cerrado",
             durationMinutes: netMinutes,
-            breakMinutes,
           });
 
           pendingIndex = null;
@@ -184,7 +143,6 @@ export function useHistoryData({ userId }: UseHistoryDataArgs) {
           dayKey,
           statusLabel: "Sin entrada",
           durationMinutes: null,
-          breakMinutes: null,
         });
       });
 
@@ -192,14 +150,11 @@ export function useHistoryData({ userId }: UseHistoryDataArgs) {
         const pending = derived[pendingIndex];
         const start = new Date(pending.occurred_at).getTime();
         const now = Date.now();
-        const grossMinutes = (now - start) / 60000;
-        const breakMinutes = overlapMinutes(start, now, breaks);
-        const netMinutes = Math.max(0, grossMinutes - breakMinutes);
+        const netMinutes = Math.max(0, (now - start) / 60000);
         derived[pendingIndex] = {
           ...pending,
           statusLabel: "En curso",
           durationMinutes: netMinutes,
-          breakMinutes,
         };
       }
 

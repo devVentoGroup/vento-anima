@@ -43,7 +43,7 @@ export function validateShiftForm(params: {
   if (end <= start) return "La hora de fin debe ser posterior a la de inicio.";
 
   const breakMinutes = Math.max(0, parseInt(form.breakMinutes, 10) || 0);
-  if (breakMinutes > 480) return "El descanso no puede superar 8 horas.";
+  if (breakMinutes > 480) return "La pausa configurada no puede superar 8 horas.";
 
   if (policyLoaded && maxShiftHoursPerDay > 0) {
     const durationHours =

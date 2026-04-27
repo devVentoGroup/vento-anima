@@ -9,8 +9,6 @@ type PendingSyncCardProps = {
   pendingAttendanceOldestCreatedAt: string | null
   pendingAttendanceNextRetryAt: number | null
   pendingAttendanceLastError: string | null
-  pendingBreakCount: number
-  pendingBreakFailedCount: number
   formatClock: (value: string | null) => string
   formatRetryClock: (value: number | null) => string | null
   onSyncNow: () => void
@@ -23,13 +21,11 @@ export function PendingSyncCard({
   pendingAttendanceOldestCreatedAt,
   pendingAttendanceNextRetryAt,
   pendingAttendanceLastError,
-  pendingBreakCount,
-  pendingBreakFailedCount,
   formatClock,
   formatRetryClock,
   onSyncNow,
 }: PendingSyncCardProps) {
-  if (pendingAttendanceCount <= 0 && pendingBreakCount <= 0) return null
+  if (pendingAttendanceCount <= 0) return null
 
   return (
     <View
@@ -68,12 +64,6 @@ export function PendingSyncCard({
       {pendingAttendanceLastError ? (
         <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
           Último error: {pendingAttendanceLastError}
-        </Text>
-      ) : null}
-      {pendingBreakCount > 0 ? (
-        <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
-          Descansos pendientes: {pendingBreakCount}
-          {pendingBreakFailedCount > 0 ? ` (${pendingBreakFailedCount} con error)` : ""}
         </Text>
       ) : null}
       <TouchableOpacity

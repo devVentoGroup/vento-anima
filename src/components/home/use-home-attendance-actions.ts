@@ -12,13 +12,10 @@ type UseHomeAttendanceActionsArgs = {
   isGeoChecking: boolean
   isCheckedIn: boolean
   requiresSelection: boolean
-  isOnBreak: boolean
   loadTodayAttendance: () => Promise<void>
   refreshGeofence: (args: { force: boolean; source: "user" }) => Promise<any>
   checkIn: () => Promise<ActionResult>
   checkOut: () => Promise<ActionResult>
-  startBreak: () => Promise<ActionResult>
-  endBreak: () => Promise<ActionResult>
   onRequireSiteSelection: () => void
 }
 
@@ -28,13 +25,10 @@ export function useHomeAttendanceActions({
   isGeoChecking,
   isCheckedIn,
   requiresSelection,
-  isOnBreak,
   loadTodayAttendance,
   refreshGeofence,
   checkIn,
   checkOut,
-  startBreak,
-  endBreak,
   onRequireSiteSelection,
 }: UseHomeAttendanceActionsArgs) {
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -97,19 +91,6 @@ export function useHomeAttendanceActions({
     requiresSelection,
   ])
 
-  const handleToggleBreak = useCallback(async () => {
-    if (!isCheckedIn || isLoading) return
-    setActionError(null)
-
-    const result = isOnBreak ? await endBreak() : await startBreak()
-
-    if (!result.success) {
-      setActionError(result.error || "No se pudo actualizar el descanso")
-    } else if (result.queued) {
-      setRecentQueuedFeedback(true)
-    }
-  }, [endBreak, isCheckedIn, isLoading, isOnBreak, startBreak])
-
   return {
     isRefreshing,
     actionError,
@@ -118,6 +99,5 @@ export function useHomeAttendanceActions({
     recentQueuedFeedback,
     handleRefresh,
     handleCheck,
-    handleToggleBreak,
   }
 }

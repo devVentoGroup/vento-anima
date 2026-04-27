@@ -1,8 +1,9 @@
+import { BASE_BRAND } from "@/brand/base/config/app-brand"
+
 export const ANIMA_BRAND = {
+  ...BASE_BRAND,
   appName: "ANIMA",
   appSubtitle: "Control de Asistencia",
-  welcomeLabel: "BIENVENIDO",
-  companyFooter: "Una Solución de Vento Group SAS",
   logoAccessibilityLabel: "ANIMA",
 } as const
 

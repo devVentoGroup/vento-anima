@@ -157,6 +157,17 @@ export function useAttendance() {
   const actionInFlightRef = useRef(false)
   const syncInFlightRef = useRef(false)
   const breakSyncInFlightRef = useRef(false)
+  const loadTodayAttendanceInFlightRef = useRef<Promise<void> | null>(null)
+  const loadTodayAttendanceLastCompletedAtRef = useRef(0)
+  const refreshGeofenceInFlightRef = useRef<{
+    key: string
+    promise: Promise<GeofenceCheckState>
+  } | null>(null)
+  const refreshGeofenceLastResultRef = useRef<{
+    key: string
+    at: number
+    result: GeofenceCheckState
+  } | null>(null)
   const geofenceCacheRef = useRef<GeofenceCheckState | null>(null)
   const geofenceLatchRef = useRef<GeofenceLatchState | null>(null)
   const siteResolveCacheRef = useRef<
@@ -429,188 +440,177 @@ export function useAttendance() {
   )
 
   const loadTodayAttendance = useCallback(async () => {
-    if (!user) {
-      setIsOffline(false)
+    if (loadTodayAttendanceInFlightRef.current) {
+      await loadTodayAttendanceInFlightRef.current
+      return
+    }
+
+    const now = Date.now()
+    if (now - loadTodayAttendanceLastCompletedAtRef.current < 900) {
+      return
+    }
+
+    const task = (async () => {
+      if (!user) {
+        setIsOffline(false)
+        setAttendanceState({
+          status: "not_checked_in",
+          lastCheckIn: null,
+          lastCheckOut: null,
+          lastCheckOutSource: null,
+          lastCheckOutNotes: null,
+          todayMinutes: 0,
+          todayBreakMinutes: 0,
+          isOnBreak: false,
+          openBreakStartAt: null,
+          snapshotAt: null,
+          openStartAt: null,
+          currentSiteName: null,
+          currentSiteId: null,
+        })
+        return
+      }
+
+      const start = new Date()
+      start.setHours(0, 0, 0, 0)
+
+      const end = new Date()
+      end.setHours(23, 59, 59, 999)
+      const nowMs = Date.now()
+      const startIso = start.toISOString()
+      const endIso = end.toISOString()
+
+      const [{ data: todayLogs, error: todayError }, lastLog] = await Promise.all([
+        supabase
+          .from("attendance_logs")
+          .select("action, occurred_at, site_id, source, notes, device_info, sites(name)")
+          .eq("employee_id", user.id)
+          .gte("occurred_at", startIso)
+          .lte("occurred_at", endIso)
+          .order("occurred_at", { ascending: true }),
+        getLastAttendanceLog(),
+      ])
+
+      if (todayError) {
+        console.error("Error loading attendance:", todayError)
+        setIsOffline(isLikelyOfflineError(todayError))
+        return
+      }
+
+      const logs = ((todayLogs ?? []) as AttendanceLogRow[]).sort((a, b) =>
+        a.occurred_at < b.occurred_at ? -1 : a.occurred_at > b.occurred_at ? 1 : 0
+      )
+      const checkIns = logs.filter((l) => l.action === "check_in")
+      const checkOuts = logs.filter((l) => l.action === "check_out")
+
+      const lastTodayCheckIn = checkIns[checkIns.length - 1]
+      const lastTodayCheckOut = checkOuts[checkOuts.length - 1]
+
+      let status: AttendanceStatus = "not_checked_in"
+      let currentSiteName: string | null = null
+      let currentSiteId: string | null = null
+      let lastCheckIn: string | null = null
+      let lastCheckOut: string | null = null
+      let openStartAt: string | null = null
+
+      if (lastLog?.action === "check_in") {
+        status = "checked_in"
+        currentSiteName = lastLog.site_name
+        currentSiteId = (lastLog as { site_id?: string })?.site_id ?? null
+        lastCheckIn = lastLog.occurred_at
+
+        if (lastTodayCheckIn) {
+          openStartAt = lastTodayCheckIn.occurred_at
+        }
+
+        if (!openStartAt && !lastTodayCheckIn) {
+          const openStart = asMillis(lastLog.occurred_at)
+          const from = openStart > start.getTime() ? openStart : start.getTime()
+          openStartAt = new Date(from).toISOString()
+        }
+      } else if (lastLog?.action === "check_out") {
+        if (lastTodayCheckIn) {
+          const logWithSiteId = lastTodayCheckIn as { site_id?: string; sites?: { name: string } }
+          currentSiteId = logWithSiteId?.site_id ?? null
+          if (
+            !lastTodayCheckOut ||
+            new Date(lastTodayCheckIn.occurred_at) > new Date(lastTodayCheckOut.occurred_at)
+          ) {
+            status = "checked_in"
+            currentSiteName = (lastTodayCheckIn.sites as any)?.name ?? null
+          } else {
+            status = "checked_out"
+            currentSiteName = (lastTodayCheckIn.sites as any)?.name ?? null
+          }
+        } else {
+          status = "not_checked_in"
+        }
+      }
+
+      lastCheckIn = lastTodayCheckIn?.occurred_at ?? lastCheckIn
+      lastCheckOut = lastTodayCheckOut?.occurred_at ?? null
+      const lastCheckOutSource = (lastTodayCheckOut as any)?.source ?? null
+      const lastCheckOutNotes = (lastTodayCheckOut as any)?.notes ?? null
+
+      const shiftIntervals: Array<{ startMs: number; endMs: number }> = []
+      let pendingStartMs: number | null = null
+
+      for (const log of logs) {
+        if (log.action === "check_in") {
+          pendingStartMs = asMillis(log.occurred_at)
+          continue
+        }
+        if (log.action === "check_out" && pendingStartMs != null) {
+          const endMs = asMillis(log.occurred_at)
+          if (endMs > pendingStartMs) {
+            shiftIntervals.push({ startMs: pendingStartMs, endMs })
+          }
+          pendingStartMs = null
+        }
+      }
+
+      if (status === "checked_in") {
+        if (pendingStartMs != null && nowMs > pendingStartMs) {
+          shiftIntervals.push({ startMs: pendingStartMs, endMs: nowMs })
+        } else if (pendingStartMs == null && openStartAt) {
+          const openStartMs = asMillis(openStartAt)
+          if (nowMs > openStartMs) {
+            shiftIntervals.push({ startMs: openStartMs, endMs: nowMs })
+          }
+        }
+      }
+
+      let grossMinutesRaw = 0
+      for (const interval of shiftIntervals) {
+        grossMinutesRaw += (interval.endMs - interval.startMs) / 60000
+      }
+      const netMinutes = Math.max(0, Math.round(grossMinutesRaw))
+
       setAttendanceState({
-        status: "not_checked_in",
-        lastCheckIn: null,
-        lastCheckOut: null,
-        lastCheckOutSource: null,
-        lastCheckOutNotes: null,
-        todayMinutes: 0,
+        status,
+        lastCheckIn,
+        lastCheckOut,
+        lastCheckOutSource,
+        lastCheckOutNotes,
+        todayMinutes: netMinutes,
         todayBreakMinutes: 0,
         isOnBreak: false,
         openBreakStartAt: null,
-        snapshotAt: null,
-        openStartAt: null,
-        currentSiteName: null,
-        currentSiteId: null,
+        snapshotAt: new Date(nowMs).toISOString(),
+        openStartAt,
+        currentSiteName,
+        currentSiteId,
       })
-      return
+      setIsOffline(false)
+    })()
+
+    loadTodayAttendanceInFlightRef.current = task
+    try {
+      await task
+      loadTodayAttendanceLastCompletedAtRef.current = Date.now()
+    } finally {
+      loadTodayAttendanceInFlightRef.current = null
     }
-
-    const start = new Date()
-    start.setHours(0, 0, 0, 0)
-
-    const end = new Date()
-    end.setHours(23, 59, 59, 999)
-    const nowMs = Date.now()
-    const startIso = start.toISOString()
-    const endIso = end.toISOString()
-
-    const [
-      { data: todayLogs, error: todayError },
-      { data: todayBreaks, error: breakError },
-      lastLog,
-    ] = await Promise.all([
-      supabase
-        .from("attendance_logs")
-        .select("action, occurred_at, site_id, source, notes, device_info, sites(name)")
-        .eq("employee_id", user.id)
-        .gte("occurred_at", startIso)
-        .lte("occurred_at", endIso)
-        .order("occurred_at", { ascending: true }),
-      supabase
-        .from("attendance_breaks")
-        .select("started_at, ended_at")
-        .eq("employee_id", user.id)
-        .lte("started_at", endIso)
-        .or(`ended_at.is.null,ended_at.gte.${startIso}`)
-        .order("started_at", { ascending: true }),
-      getLastAttendanceLog(),
-    ])
-
-    if (todayError || breakError) {
-      console.error("Error loading attendance:", todayError ?? breakError)
-      setIsOffline(isLikelyOfflineError(todayError ?? breakError))
-      return
-    }
-
-    const logs = ((todayLogs ?? []) as AttendanceLogRow[]).sort((a, b) =>
-      a.occurred_at < b.occurred_at ? -1 : a.occurred_at > b.occurred_at ? 1 : 0
-    )
-    const breaks = (todayBreaks ?? []) as AttendanceBreakRow[]
-    const checkIns = logs.filter((l) => l.action === "check_in")
-    const checkOuts = logs.filter((l) => l.action === "check_out")
-
-    const lastTodayCheckIn = checkIns[checkIns.length - 1]
-    const lastTodayCheckOut = checkOuts[checkOuts.length - 1]
-
-    let status: AttendanceStatus = "not_checked_in"
-    let currentSiteName: string | null = null
-    let currentSiteId: string | null = null
-    let lastCheckIn: string | null = null
-    let lastCheckOut: string | null = null
-    let openStartAt: string | null = null
-
-    if (lastLog?.action === "check_in") {
-      status = "checked_in"
-      currentSiteName = lastLog.site_name
-      currentSiteId = (lastLog as { site_id?: string })?.site_id ?? null
-      lastCheckIn = lastLog.occurred_at
-
-      if (lastTodayCheckIn) {
-        openStartAt = lastTodayCheckIn.occurred_at
-      }
-
-      if (!openStartAt && !lastTodayCheckIn) {
-        const openStart = asMillis(lastLog.occurred_at)
-        const from = openStart > start.getTime() ? openStart : start.getTime()
-        openStartAt = new Date(from).toISOString()
-      }
-    } else if (lastLog?.action === "check_out") {
-      if (lastTodayCheckIn) {
-        const logWithSiteId = lastTodayCheckIn as { site_id?: string; sites?: { name: string } }
-        currentSiteId = logWithSiteId?.site_id ?? null
-        if (
-          !lastTodayCheckOut ||
-          new Date(lastTodayCheckIn.occurred_at) > new Date(lastTodayCheckOut.occurred_at)
-        ) {
-          status = "checked_in"
-          currentSiteName = (lastTodayCheckIn.sites as any)?.name ?? null
-        } else {
-          status = "checked_out"
-          currentSiteName = (lastTodayCheckIn.sites as any)?.name ?? null
-        }
-      } else {
-        status = "not_checked_in"
-      }
-    }
-
-    lastCheckIn = lastTodayCheckIn?.occurred_at ?? lastCheckIn
-    lastCheckOut = lastTodayCheckOut?.occurred_at ?? null
-    const lastCheckOutSource = (lastTodayCheckOut as any)?.source ?? null
-    const lastCheckOutNotes = (lastTodayCheckOut as any)?.notes ?? null
-
-    const breakIntervals = breaks
-      .map((item) => {
-        const startMs = Math.max(asMillis(item.started_at), start.getTime())
-        const endMsRaw = item.ended_at ? asMillis(item.ended_at) : nowMs
-        const endMs = Math.min(endMsRaw, nowMs)
-        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null
-        return { startMs, endMs }
-      })
-      .filter(Boolean) as Array<{ startMs: number; endMs: number }>
-
-    const openBreak = [...breaks]
-      .reverse()
-      .find((item) => item.ended_at == null)
-    const isOnBreak = status === "checked_in" && !!openBreak
-    const openBreakStartAt = isOnBreak ? openBreak?.started_at ?? null : null
-
-    const shiftIntervals: Array<{ startMs: number; endMs: number }> = []
-    let pendingStartMs: number | null = null
-
-    for (const log of logs) {
-      if (log.action === "check_in") {
-        pendingStartMs = asMillis(log.occurred_at)
-        continue
-      }
-      if (log.action === "check_out" && pendingStartMs != null) {
-        const endMs = asMillis(log.occurred_at)
-        if (endMs > pendingStartMs) {
-          shiftIntervals.push({ startMs: pendingStartMs, endMs })
-        }
-        pendingStartMs = null
-      }
-    }
-
-    if (status === "checked_in") {
-      if (pendingStartMs != null && nowMs > pendingStartMs) {
-        shiftIntervals.push({ startMs: pendingStartMs, endMs: nowMs })
-      } else if (pendingStartMs == null && openStartAt) {
-        const openStartMs = asMillis(openStartAt)
-        if (nowMs > openStartMs) {
-          shiftIntervals.push({ startMs: openStartMs, endMs: nowMs })
-        }
-      }
-    }
-
-    let grossMinutesRaw = 0
-    let breakMinutesRaw = 0
-    for (const interval of shiftIntervals) {
-      grossMinutesRaw += (interval.endMs - interval.startMs) / 60000
-      breakMinutesRaw += getOverlapMinutes(interval.startMs, interval.endMs, breakIntervals)
-    }
-    const netMinutes = Math.max(0, Math.round(grossMinutesRaw - breakMinutesRaw))
-    const todayBreakMinutes = Math.max(0, Math.round(breakMinutesRaw))
-
-    setAttendanceState({
-      status,
-      lastCheckIn,
-      lastCheckOut,
-      lastCheckOutSource,
-      lastCheckOutNotes,
-      todayMinutes: netMinutes,
-      todayBreakMinutes,
-      isOnBreak,
-      openBreakStartAt,
-      snapshotAt: new Date(nowMs).toISOString(),
-      openStartAt,
-      currentSiteName,
-      currentSiteId,
-    })
-    setIsOffline(false)
   }, [user, getLastAttendanceLog])
 
   const enqueuePendingAttendanceEvent = useCallback(
@@ -925,213 +925,251 @@ export function useAttendance() {
       const now = Date.now()
       const isSilentRefresh = args?.silent === true
       const updateSource = args?.source ?? "user"
-
-      if (!user || !employee) {
-        const next = buildGeofenceErrorState({
-          mode: args?.mode ?? "check_in",
-          message: "No autenticado",
-          updatedAt: now,
-          siteId: args?.siteId ?? null,
-        })
-        geofenceCacheRef.current = next
-        setGeofenceState(next)
-        return next
-      }
-
-      let mode: GeofenceMode
-      let siteId: string | null = null
-      let location: ValidatedLocation | null = args?.location ?? null
-
-      if (location && now - location.timestamp > 30000) {
-        location = null
-      }
-
-      const lastLog = args?.mode ? null : await getLastAttendanceLog()
-      const target = await resolveGeofenceTarget({
-        argsMode: args?.mode,
-        argsSiteId: args?.siteId,
-        selectedSiteId,
-        employeeSites,
-        lastLog,
-        now,
+      const refreshKey = [
+        args?.force ? "force" : "soft",
+        args?.mode ?? "auto",
+        args?.siteId ?? "auto",
+        isSilentRefresh ? "silent" : "loud",
         updateSource,
-        location,
-        checkInMaxAccuracyMeters:
-          attendancePolicy.geofence_check_in_max_accuracy_meters,
-        checkOutMaxAccuracyMeters:
-          attendancePolicy.geofence_check_out_max_accuracy_meters,
-        resolveBestEffortSelectionLocation,
-        buildSelectionCandidates,
-        buildDeviceInfoPayload,
-      })
+        args?.location ? String(Math.round(args.location.timestamp / 1000)) : "no-location",
+      ].join(":")
 
-      if (target.kind === "blocked") {
-        const next = target.state
-        geofenceCacheRef.current = next
-        setGeofenceState(next)
-        return next
+      if (refreshGeofenceInFlightRef.current?.key === refreshKey) {
+        return refreshGeofenceInFlightRef.current.promise
       }
 
-      mode = target.mode
-      siteId = target.siteId
-      location = target.location
-      const policy = target.policy
-
-      const cached = geofenceCacheRef.current
-      const canReuse =
+      const recent = refreshGeofenceLastResultRef.current
+      if (
         !args?.force &&
-        cached &&
-        cached.status === "ready" &&
-        cached.canProceed &&
-        !cached.requiresSelection &&
-        cached.mode === mode &&
-        cached.siteId === siteId &&
-        cached.updatedAt != null &&
-        now - cached.updatedAt <= attendancePolicy.geofence_ready_cache_ms
-
-      if (canReuse) return cached
-
-      if (!isSilentRefresh) {
-        setGeofenceState((prev) => ({
-          ...prev,
-          status: "checking",
-          canProceed: false,
-          mode,
-          lastUpdateSource: updateSource,
-          siteId,
-          message: "Verificando ubicación...",
-          updatedAt: now,
-          requiresSelection: false,
-          candidateSites: null,
-        }))
+        !args?.location &&
+        recent &&
+        recent.key === refreshKey &&
+        now - recent.at < 1200
+      ) {
+        return recent.result
       }
 
-      try {
-        const resolved = await resolveSite(siteId)
-      if (!resolved.site) {
-        const latched = canReuseRecentReadyGeofence(mode, siteId)
-        if (latched) {
-          const next = buildLatchedReadyState(latched, updateSource, "network")
-          geofenceCacheRef.current = next
-          setGeofenceState(next)
-          return next
-        }
-        const next = buildGeofenceErrorState({
-          mode,
-          siteId,
-          message: "No se pudo cargar la sede para verificar ubicación",
-          updatedAt: now,
-        })
-        geofenceCacheRef.current = next
-        setGeofenceState(next)
-        return next
-      }
-
-      const site = resolved.site
-      const preflightState = buildResolvedSitePreflightState({
-        mode,
-        site,
-        hasCoordinates: resolved.hasCoordinates,
-        updatedAt: now,
-      })
-      if (preflightState) {
-        geofenceCacheRef.current = preflightState
-        setGeofenceState(preflightState)
-        return preflightState
-      }
-
-      const effectiveRadius = Number(site.radiusMeters ?? 0)
-
-      if (!location) {
-        const locationResult = await getValidatedLocation({
-          maxAccuracyMeters: policy.maxAccuracyMeters,
-          samples: mode === "check_out" ? 3 : 4,
-          timeoutMs: 20000,
-        })
-        if (!locationResult.success || !locationResult.location) {
-          recordDiagnosticError(
-            classifyDiagnosticStage(locationResult.error ?? null),
-            String(locationResult.error ?? "Ubicación requerida para continuar")
-          )
-          const transientLocationIssue =
-            isLikelyTransientGeoError(locationResult.error ?? null) ||
-            isLikelyOfflineError(locationResult.error ?? null)
-          if (transientLocationIssue) {
-            const latched = canReuseRecentReadyGeofence(mode, site.id)
-            if (latched) {
-              const next = buildLatchedReadyState(latched, updateSource, "location")
-              geofenceCacheRef.current = next
-              setGeofenceState(next)
-              return next
-            }
-          }
-          const next = buildGeofenceBlockedState({
-            mode,
-            siteId: site.id,
-            siteName: site.name,
-            effectiveRadiusMeters: effectiveRadius,
-            message: locationResult.error || "Ubicación requerida para continuar",
+      const task = (async () => {
+        if (!user || !employee) {
+          const next = buildGeofenceErrorState({
+            mode: args?.mode ?? "check_in",
+            message: "No autenticado",
             updatedAt: now,
-            location: locationResult.location ?? null,
-            deviceInfo: buildDeviceInfoPayload(locationResult.location ?? null),
+            siteId: args?.siteId ?? null,
           })
           geofenceCacheRef.current = next
           setGeofenceState(next)
           return next
         }
-        location = locationResult.location
-      }
 
-      if (!location) {
-        const next = buildGeofenceErrorState({
-          mode,
-          siteId: site.id,
-          siteName: site.name,
-          effectiveRadiusMeters: effectiveRadius,
-          message: "Ubicación requerida para continuar",
-          updatedAt: now,
+        let mode: GeofenceMode
+        let siteId: string | null = null
+        let location: ValidatedLocation | null = args?.location ?? null
+
+        if (location && now - location.timestamp > 30000) {
+          location = null
+        }
+
+        const lastLog = args?.mode ? null : await getLastAttendanceLog()
+        const target = await resolveGeofenceTarget({
+          argsMode: args?.mode,
+          argsSiteId: args?.siteId,
+          selectedSiteId,
+          employeeSites,
+          lastLog,
+          now,
+          updateSource,
+          location,
+          checkInMaxAccuracyMeters:
+            attendancePolicy.geofence_check_in_max_accuracy_meters,
+          checkOutMaxAccuracyMeters:
+            attendancePolicy.geofence_check_out_max_accuracy_meters,
+          resolveBestEffortSelectionLocation,
+          buildSelectionCandidates,
+          buildDeviceInfoPayload,
         })
-        geofenceCacheRef.current = next
-        setGeofenceState(next)
-        return next
-      }
 
-      const next = validateResolvedSiteGeofence({
-        mode,
-        site,
-        hasCoordinates: resolved.hasCoordinates,
-        policy,
-        updatedAt: now,
-        location,
-        buildDeviceInfoPayload,
-      })
+        if (target.kind === "blocked") {
+          const next = target.state
+          geofenceCacheRef.current = next
+          setGeofenceState(next)
+          return next
+        }
 
-      geofenceCacheRef.current = next
-      setGeofenceState(next)
-      return next
+        mode = target.mode
+        siteId = target.siteId
+        location = target.location
+        const policy = target.policy
 
-      } catch (error) {
-        // Catch-all para evitar que se quede en "checking" para siempre
-        console.error('[refreshGeofence] Error no manejado:', error)
-        recordDiagnosticError(classifyDiagnosticStage(error), getErrorMessage(error))
-        if (isLikelyOfflineError(error)) {
-          const latched = canReuseRecentReadyGeofence(mode, siteId)
-          if (latched) {
-            const next = buildLatchedReadyState(latched, updateSource, "network")
+        const cached = geofenceCacheRef.current
+        const canReuse =
+          !args?.force &&
+          cached &&
+          cached.status === "ready" &&
+          cached.canProceed &&
+          !cached.requiresSelection &&
+          cached.mode === mode &&
+          cached.siteId === siteId &&
+          cached.updatedAt != null &&
+          now - cached.updatedAt <= attendancePolicy.geofence_ready_cache_ms
+
+        if (canReuse) return cached
+
+        if (!isSilentRefresh) {
+          setGeofenceState((prev) => ({
+            ...prev,
+            status: "checking",
+            canProceed: false,
+            mode,
+            lastUpdateSource: updateSource,
+            siteId,
+            message: "Verificando ubicación...",
+            updatedAt: now,
+            requiresSelection: false,
+            candidateSites: null,
+          }))
+        }
+
+        try {
+          const resolved = await resolveSite(siteId)
+          if (!resolved.site) {
+            const latched = canReuseRecentReadyGeofence(mode, siteId)
+            if (latched) {
+              const next = buildLatchedReadyState(latched, updateSource, "network")
+              geofenceCacheRef.current = next
+              setGeofenceState(next)
+              return next
+            }
+            const next = buildGeofenceErrorState({
+              mode,
+              siteId,
+              message: "No se pudo cargar la sede para verificar ubicación",
+              updatedAt: now,
+            })
             geofenceCacheRef.current = next
             setGeofenceState(next)
             return next
           }
+
+          const site = resolved.site
+          const preflightState = buildResolvedSitePreflightState({
+            mode,
+            site,
+            hasCoordinates: resolved.hasCoordinates,
+            updatedAt: now,
+          })
+          if (preflightState) {
+            geofenceCacheRef.current = preflightState
+            setGeofenceState(preflightState)
+            return preflightState
+          }
+
+          const effectiveRadius = Number(site.radiusMeters ?? 0)
+
+          if (!location) {
+            const locationResult = await getValidatedLocation({
+              maxAccuracyMeters: policy.maxAccuracyMeters,
+              samples: mode === "check_out" ? 3 : 4,
+              timeoutMs: 20000,
+            })
+            if (!locationResult.success || !locationResult.location) {
+              recordDiagnosticError(
+                classifyDiagnosticStage(locationResult.error ?? null),
+                String(locationResult.error ?? "Ubicación requerida para continuar")
+              )
+              const transientLocationIssue =
+                isLikelyTransientGeoError(locationResult.error ?? null) ||
+                isLikelyOfflineError(locationResult.error ?? null)
+              if (transientLocationIssue) {
+                const latched = canReuseRecentReadyGeofence(mode, site.id)
+                if (latched) {
+                  const next = buildLatchedReadyState(latched, updateSource, "location")
+                  geofenceCacheRef.current = next
+                  setGeofenceState(next)
+                  return next
+                }
+              }
+              const next = buildGeofenceBlockedState({
+                mode,
+                siteId: site.id,
+                siteName: site.name,
+                effectiveRadiusMeters: effectiveRadius,
+                message: locationResult.error || "Ubicación requerida para continuar",
+                updatedAt: now,
+                location: locationResult.location ?? null,
+                deviceInfo: buildDeviceInfoPayload(locationResult.location ?? null),
+              })
+              geofenceCacheRef.current = next
+              setGeofenceState(next)
+              return next
+            }
+            location = locationResult.location
+          }
+
+          if (!location) {
+            const next = buildGeofenceErrorState({
+              mode,
+              siteId: site.id,
+              siteName: site.name,
+              effectiveRadiusMeters: effectiveRadius,
+              message: "Ubicación requerida para continuar",
+              updatedAt: now,
+            })
+            geofenceCacheRef.current = next
+            setGeofenceState(next)
+            return next
+          }
+
+          const next = validateResolvedSiteGeofence({
+            mode,
+            site,
+            hasCoordinates: resolved.hasCoordinates,
+            policy,
+            updatedAt: now,
+            location,
+            buildDeviceInfoPayload,
+          })
+
+          geofenceCacheRef.current = next
+          setGeofenceState(next)
+          return next
+        } catch (error) {
+          console.error('[refreshGeofence] Error no manejado:', error)
+          recordDiagnosticError(classifyDiagnosticStage(error), getErrorMessage(error))
+          if (isLikelyOfflineError(error)) {
+            const latched = canReuseRecentReadyGeofence(mode, siteId)
+            if (latched) {
+              const next = buildLatchedReadyState(latched, updateSource, "network")
+              geofenceCacheRef.current = next
+              setGeofenceState(next)
+              return next
+            }
+          }
+          const errorState = buildGeofenceErrorState({
+            mode,
+            siteId: siteId ?? null,
+            message: "Error al verificar ubicación. Intenta de nuevo.",
+            updatedAt: Date.now(),
+          })
+          geofenceCacheRef.current = errorState
+          setGeofenceState(errorState)
+          return errorState
         }
-        const errorState = buildGeofenceErrorState({
-          mode,
-          siteId: siteId ?? null,
-          message: "Error al verificar ubicación. Intenta de nuevo.",
-          updatedAt: Date.now(),
-        })
-        geofenceCacheRef.current = errorState
-        setGeofenceState(errorState)
-        return errorState
+      })()
+
+      refreshGeofenceInFlightRef.current = { key: refreshKey, promise: task }
+      try {
+        const result = await task
+        refreshGeofenceLastResultRef.current = {
+          key: refreshKey,
+          at: Date.now(),
+          result,
+        }
+        return result
+      } finally {
+        if (refreshGeofenceInFlightRef.current?.key === refreshKey) {
+          refreshGeofenceInFlightRef.current = null
+        }
       }
     },
     [
@@ -1327,21 +1365,6 @@ export function useAttendance() {
 
     try {
       const siteIdToClose = lastLog.site_id
-      if (pendingBreakQueue.length > 0) {
-        await syncPendingBreakQueue({ force: true })
-        const remainingBreaks = await loadPendingBreakQueue()
-        if (remainingBreaks.length > 0) {
-          const failedCount = remainingBreaks.filter((i) => i.status === "failed").length
-          return {
-            success: false,
-            error:
-              failedCount > 0
-                ? "Tienes descansos pendientes con conflicto. Sincroniza o revisa antes de cerrar turno."
-                : "Estamos sincronizando descansos pendientes. Intenta cerrar turno de nuevo en unos segundos.",
-          }
-        }
-      }
-
       const geo = await ensureActionGeofenceReady({
         mode: "check_out",
         refreshGeofence,
@@ -1356,55 +1379,6 @@ export function useAttendance() {
       if (!geo.canProceed) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
         return { success: false, error: geo.message || "Ubicación no verificada" }
-      }
-
-      if (attendanceState.isOnBreak || attendanceState.openBreakStartAt) {
-        const { error: breakCloseError } = await supabase.rpc("end_attendance_break", {
-          p_source: getAttendanceSource(),
-          p_notes: "Cierre automático por check-out",
-        })
-        if (breakCloseError && !isNoActiveBreakError(breakCloseError)) {
-          if (isLikelyOfflineError(breakCloseError)) {
-            const nowIso = new Date().toISOString()
-            const clientEventId = buildClientEventId("break_end")
-            await enqueuePendingBreakEvent(
-              buildQueuedBreakPayload({
-                action: "end",
-                siteId: siteIdToClose,
-                source: getAttendanceSource(),
-                clientEventId,
-                queuedAt: nowIso,
-                notesExtra: { reason: "Cierre automático por check-out" },
-              }),
-              breakCloseError
-            )
-            applyOptimisticBreakUpdate("end", nowIso)
-
-            const queuedCheckoutEventId = buildClientEventId("check_out")
-            const queuedPayload = buildAttendanceInsertPayload({
-              employeeId: user.id,
-              siteId: siteIdToClose,
-              action: "check_out",
-              source: getAttendanceSource(),
-              latitude: geo.location?.latitude ?? null,
-              longitude: geo.location?.longitude ?? null,
-              accuracyMeters: geo.location?.accuracy ?? null,
-              deviceInfo: geo.deviceInfo,
-              clientEventId: queuedCheckoutEventId,
-              occurredAt: nowIso,
-              shiftId: lastLog.shift_id,
-              extraDeviceInfo: {
-                queuedAt: nowIso,
-                dependsOnBreakEnd: clientEventId,
-              },
-            })
-            await enqueuePendingAttendanceEvent(queuedPayload, breakCloseError)
-            applyOptimisticAttendanceUpdate(queuedPayload, lastLog.site_name ?? null)
-            setIsOffline(true)
-            return { success: true, queued: true, timestamp: nowIso }
-          }
-          throw breakCloseError
-        }
       }
 
       const location = geo.location
@@ -1500,16 +1474,9 @@ export function useAttendance() {
     isLatchValidFor,
     insertAttendanceLogWithRetry,
     enqueuePendingAttendanceEvent,
-    enqueuePendingBreakEvent,
-    applyOptimisticBreakUpdate,
     applyOptimisticAttendanceUpdate,
     recordDiagnosticError,
     loadTodayAttendance,
-    pendingBreakQueue.length,
-    syncPendingBreakQueue,
-    loadPendingBreakQueue,
-    attendanceState.isOnBreak,
-    attendanceState.openBreakStartAt,
   ])
 
   const startBreak = useCallback(async (): Promise<CheckInOutResult> => {
@@ -1679,7 +1646,7 @@ export function useAttendance() {
     userId: user?.id,
     isEmployeeActive: !!employee,
     attendanceStatus: attendanceState.status,
-    isOnBreak: attendanceState.isOnBreak,
+    isOnBreak: false,
     departureMinCheckIntervalMs: attendancePolicy.shift_departure_min_check_interval_ms,
     departureMaxAccuracyMeters: attendancePolicy.shift_departure_max_accuracy_meters,
     departureThresholdMeters: attendancePolicy.shift_departure_threshold_meters,
@@ -1703,13 +1670,11 @@ export function useAttendance() {
     [refreshGeofence, setSelectedSite]
   )
 
-  const pendingAnyCount = pendingAttendanceQueue.length + pendingBreakQueue.length
-  const syncingAnyCount =
-    pendingAttendanceQueue.filter((i) => i.status === "syncing").length +
-    pendingBreakQueue.filter((i) => i.status === "syncing").length
-  const failedAnyCount =
-    pendingAttendanceQueue.filter((i) => i.status === "failed" || i.status === "conflict").length +
-    pendingBreakQueue.filter((i) => i.status === "failed" || i.status === "conflict").length
+  const pendingAnyCount = pendingAttendanceQueue.length
+  const syncingAnyCount = pendingAttendanceQueue.filter((i) => i.status === "syncing").length
+  const failedAnyCount = pendingAttendanceQueue.filter(
+    (i) => i.status === "failed" || i.status === "conflict"
+  ).length
 
   const attendanceUxState = useMemo<AttendanceUxState>(() => {
     if (geofenceState.status === "checking") return "checking"
@@ -1729,8 +1694,6 @@ export function useAttendance() {
     loadTodayAttendance,
     checkIn,
     checkOut,
-    startBreak,
-    endBreak,
     pendingAttendanceCount: pendingAttendanceQueue.length,
     pendingAttendanceSyncingCount: pendingAttendanceQueue.filter((i) => i.status === "syncing").length,
     pendingAttendanceFailedCount: pendingAttendanceQueue.filter((i) => i.status === "failed").length,
@@ -1752,16 +1715,10 @@ export function useAttendance() {
       [...pendingAttendanceQueue]
         .map((i) => i.createdAt)
         .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0] ?? null,
-    pendingBreakCount: pendingBreakQueue.length,
-    pendingBreakSyncingCount: pendingBreakQueue.filter((i) => i.status === "syncing").length,
-    pendingBreakFailedCount: pendingBreakQueue.filter(
-      (i) => i.status === "failed" || i.status === "conflict"
-    ).length,
     attendanceUxState,
     attendanceUxMessage: ATTENDANCE_UX_MESSAGES[attendanceUxState],
     attendanceDiagnostics,
     syncPendingAttendanceQueue,
-    syncPendingBreakQueue,
     selectSiteForCheckIn,
     startRealtimeGeofence,
     stopRealtimeGeofence,

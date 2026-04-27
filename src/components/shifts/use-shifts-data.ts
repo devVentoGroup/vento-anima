@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 
@@ -21,6 +21,26 @@ function getShiftSortValue(shift: Pick<ShiftRow, "shift_date" | "start_time">) {
   return new Date(`${shift.shift_date}T${shift.start_time}`).getTime();
 }
 
+function getWeekDays() {
+  const now = new Date();
+  now.setHours(12, 0, 0, 0);
+  const day = now.getDay();
+  const diff = (day + 6) % 7;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - diff);
+
+  return Array.from({ length: 7 }).map((_, index) => {
+    const date = new Date(monday);
+    date.setDate(monday.getDate() + index);
+    const iso = date.toISOString().slice(0, 10);
+    const weekday = date.toLocaleDateString("es-CO", { weekday: "long" });
+    return {
+      date: iso,
+      label: `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)}`,
+    };
+  });
+}
+
 export type ManagerShiftRow = ShiftRow & {
   employee_id: string;
   published_at?: string | null;
@@ -39,6 +59,7 @@ type UseShiftsDataArgs = {
   employeeRole: string | null | undefined;
   employeeSiteId: string | null | undefined;
   canManageShifts: boolean;
+  canViewSiteWeek: boolean;
 };
 
 export function useShiftsData({
@@ -46,7 +67,9 @@ export function useShiftsData({
   employeeRole,
   employeeSiteId,
   canManageShifts,
+  canViewSiteWeek,
 }: UseShiftsDataArgs) {
+  const SHIFT_CACHE_MS = 5000;
   const [rows, setRows] = useState<ShiftRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -58,38 +81,60 @@ export function useShiftsData({
   const [managerRows, setManagerRows] = useState<ManagerShiftRow[]>([]);
   const [expandedManagerDays, setExpandedManagerDays] = useState<Record<string, boolean>>({});
   const [updatingShiftId, setUpdatingShiftId] = useState<string | null>(null);
+  const loadShiftsInFlightRef = useRef<Promise<void> | null>(null);
+  const loadManagedShiftsInFlightRef = useRef<Promise<void> | null>(null);
+  const loadManagerOptionsInFlightRef = useRef<Promise<void> | null>(null);
+  const lastShiftsLoadedAtRef = useRef(0);
+  const lastManagedShiftsLoadedAtRef = useRef(0);
+  const lastManagerOptionsLoadedAtRef = useRef(0);
 
   const managerSiteId = useMemo(() => {
-    if (!canManageShifts) return null;
+    if (!canViewSiteWeek) return null;
     return employeeSiteId ?? null;
-  }, [canManageShifts, employeeSiteId]);
+  }, [canViewSiteWeek, employeeSiteId]);
 
   const loadManagerOptions = useCallback(async () => {
     if (!userId || !canManageShifts) return;
-    try {
-      let sitesQuery = supabase
-        .from("sites")
-        .select("id, name")
-        .eq("is_active", true)
-        .order("name", { ascending: true });
-      if (employeeRole === "gerente" && managerSiteId) {
-        sitesQuery = sitesQuery.eq("id", managerSiteId);
-      }
-      const { data: sitesData } = await sitesQuery;
-      setManagerSites((sitesData as SiteOption[]) ?? []);
+    if (loadManagerOptionsInFlightRef.current) {
+      await loadManagerOptionsInFlightRef.current;
+      return;
+    }
+    if (Date.now() - lastManagerOptionsLoadedAtRef.current < SHIFT_CACHE_MS) return;
 
-      let empQuery = supabase
-        .from("employees")
-        .select("id, full_name")
-        .eq("is_active", true)
-        .order("full_name", { ascending: true });
-      if (employeeRole === "gerente" && managerSiteId) {
-        empQuery = empQuery.eq("site_id", managerSiteId);
+    const task = (async () => {
+      try {
+        let sitesQuery = supabase
+          .from("sites")
+          .select("id, name")
+          .eq("is_active", true)
+          .order("name", { ascending: true });
+        if (employeeRole === "gerente" && managerSiteId) {
+          sitesQuery = sitesQuery.eq("id", managerSiteId);
+        }
+        const { data: sitesData } = await sitesQuery;
+        setManagerSites((sitesData as SiteOption[]) ?? []);
+
+        let empQuery = supabase
+          .from("employees")
+          .select("id, full_name")
+          .eq("is_active", true)
+          .order("full_name", { ascending: true });
+        if (employeeRole === "gerente" && managerSiteId) {
+          empQuery = empQuery.eq("site_id", managerSiteId);
+        }
+        const { data: empData } = await empQuery;
+        setManagerEmployees((empData as EmployeeOption[]) ?? []);
+      } catch (e) {
+        console.error("[SHIFTS] loadManagerOptions error:", e);
       }
-      const { data: empData } = await empQuery;
-      setManagerEmployees((empData as EmployeeOption[]) ?? []);
-    } catch (e) {
-      console.error("[SHIFTS] loadManagerOptions error:", e);
+    })();
+
+    loadManagerOptionsInFlightRef.current = task;
+    try {
+      await task;
+      lastManagerOptionsLoadedAtRef.current = Date.now();
+    } finally {
+      loadManagerOptionsInFlightRef.current = null;
     }
   }, [userId, canManageShifts, employeeRole, managerSiteId]);
 
@@ -100,76 +145,117 @@ export function useShiftsData({
   }, [createModalVisible, editModalVisible, canManageShifts, loadManagerOptions]);
 
   const loadManagedShifts = useCallback(async () => {
-    if (!userId || !canManageShifts) return;
-    try {
-      let query = supabase
-        .from("employee_shifts")
-        .select(
-          "id, employee_id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, sites(name), published_at, employees!employee_shifts_employee_id_fkey(full_name)",
-        )
-        .gte("shift_date", getDateOffset(-7))
-        .lte("shift_date", getDateOffset(30))
-        .order("shift_date", { ascending: true })
-        .order("start_time", { ascending: true });
-      if (employeeRole === "gerente" && managerSiteId) {
-        query = query.eq("site_id", managerSiteId);
-      }
-      const { data, error } = await query;
-      if (error) throw error;
-      setManagerRows((data ?? []) as ManagerShiftRow[]);
-    } catch (e) {
-      console.error("[SHIFTS] loadManagedShifts error:", e);
+    if (!userId || !canViewSiteWeek || !managerSiteId) {
       setManagerRows([]);
+      return;
     }
-  }, [userId, canManageShifts, employeeRole, managerSiteId]);
+    if (loadManagedShiftsInFlightRef.current) {
+      await loadManagedShiftsInFlightRef.current;
+      return;
+    }
+    if (Date.now() - lastManagedShiftsLoadedAtRef.current < SHIFT_CACHE_MS) return;
 
-  const loadShifts = useCallback(async () => {
+    const task = (async () => {
+      try {
+        let query = supabase
+          .from("employee_shifts")
+          .select(
+            "id, employee_id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, sites(name), published_at, employees!employee_shifts_employee_id_fkey(full_name)",
+          )
+          .eq("site_id", managerSiteId)
+          .gte("shift_date", getDateOffset(-7))
+          .lte("shift_date", getDateOffset(30))
+          .order("shift_date", { ascending: true })
+          .order("start_time", { ascending: true });
+        if (!canManageShifts) {
+          query = query.not("published_at", "is", null);
+        }
+        const { data, error } = await query;
+        if (error) throw error;
+        setManagerRows((data ?? []) as ManagerShiftRow[]);
+      } catch (e) {
+        console.error("[SHIFTS] loadManagedShifts error:", e);
+        setManagerRows([]);
+      }
+    })();
+
+    loadManagedShiftsInFlightRef.current = task;
+    try {
+      await task;
+      lastManagedShiftsLoadedAtRef.current = Date.now();
+    } finally {
+      loadManagedShiftsInFlightRef.current = null;
+    }
+  }, [userId, canManageShifts, canViewSiteWeek, managerSiteId]);
+
+  const loadShifts = useCallback(async (opts?: { force?: boolean }) => {
     if (!userId) {
       setRows([]);
       setIsLoading(false);
       return;
     }
+    if (loadShiftsInFlightRef.current) {
+      await loadShiftsInFlightRef.current;
+      return;
+    }
+    if (!opts?.force && Date.now() - lastShiftsLoadedAtRef.current < SHIFT_CACHE_MS) return;
 
-    setIsLoading(true);
+    const task = (async () => {
+      try {
+        setIsLoading(true);
+        const { data, error } = await supabase
+          .from("employee_shifts")
+          .select(
+            "id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, sites(name)",
+          )
+          .eq("employee_id", userId)
+          .not("published_at", "is", null)
+          .gte("shift_date", getDateOffset(-7))
+          .lte("shift_date", getDateOffset(30))
+          .order("shift_date", { ascending: true })
+          .order("start_time", { ascending: true });
+
+        if (error) throw error;
+        setRows(((data ?? []) as ShiftRow[]).slice());
+      } catch (error) {
+        console.error("[SHIFTS] Error loading shifts:", error);
+        setRows([]);
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+
+    loadShiftsInFlightRef.current = task;
     try {
-      const { data, error } = await supabase
-        .from("employee_shifts")
-        .select(
-          "id, shift_date, start_time, end_time, shift_kind, show_end_as_close, break_minutes, notes, status, site_id, sites(name)",
-        )
-        .eq("employee_id", userId)
-        .not("published_at", "is", null)
-        .gte("shift_date", getDateOffset(-7))
-        .lte("shift_date", getDateOffset(30))
-        .order("shift_date", { ascending: true })
-        .order("start_time", { ascending: true });
-
-      if (error) throw error;
-      setRows(((data ?? []) as ShiftRow[]).slice());
-    } catch (error) {
-      console.error("[SHIFTS] Error loading shifts:", error);
-      setRows([]);
+      await task;
+      lastShiftsLoadedAtRef.current = Date.now();
     } finally {
-      setIsLoading(false);
+      loadShiftsInFlightRef.current = null;
     }
   }, [userId]);
 
   useFocusEffect(
     useCallback(() => {
       void loadShifts();
-      if (canManageShifts) void loadManagedShifts();
-    }, [loadShifts, canManageShifts, loadManagedShifts]),
+      if (canViewSiteWeek) void loadManagedShifts();
+    }, [loadShifts, canViewSiteWeek, loadManagedShifts]),
   );
 
   const onRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      await loadShifts();
-      if (canManageShifts) await loadManagedShifts();
+      await loadShifts({ force: true });
+      if (canViewSiteWeek) {
+        if (loadManagedShiftsInFlightRef.current) {
+          await loadManagedShiftsInFlightRef.current;
+        } else {
+          await loadManagedShifts();
+        }
+      }
     } finally {
       setIsRefreshing(false);
     }
-  }, [loadShifts, canManageShifts, loadManagedShifts]);
+  }, [loadShifts, canViewSiteWeek, loadManagedShifts]);
 
   const openEditShift = useCallback((row: ManagerShiftRow) => {
     setEditingShift({
@@ -194,7 +280,9 @@ export function useShiftsData({
   }, []);
 
   const onEditSuccess = useCallback(() => {
-    void loadShifts();
+    lastShiftsLoadedAtRef.current = 0;
+    lastManagedShiftsLoadedAtRef.current = 0;
+    void loadShifts({ force: true });
     void loadManagedShifts();
   }, [loadManagedShifts, loadShifts]);
 
@@ -207,7 +295,9 @@ export function useShiftsData({
           .update({ status })
           .eq("id", shiftId);
         if (error) throw error;
-        await loadShifts();
+        lastShiftsLoadedAtRef.current = 0;
+        lastManagedShiftsLoadedAtRef.current = 0;
+        await loadShifts({ force: true });
         await loadManagedShifts();
       } catch (e) {
         console.error("[SHIFTS] updateShiftStatus error:", e);
@@ -265,6 +355,14 @@ export function useShiftsData({
 
   const nextShift = upcomingRows[0] ?? null;
 
+  const personalWeek = useMemo(() => {
+    const weekDays = getWeekDays();
+    return weekDays.map((day) => ({
+      ...day,
+      items: rows.filter((row) => row.shift_date === day.date),
+    }));
+  }, [rows]);
+
   const managerRowsByDay = useMemo(() => {
     const map = new Map<string, ManagerShiftRow[]>();
     for (const row of managerRows) {
@@ -275,6 +373,16 @@ export function useShiftsData({
     return Array.from(map.entries()).map(([shiftDate, dayRows]) => ({
       shiftDate,
       rows: dayRows,
+    }));
+  }, [managerRows]);
+
+  const managerWeek = useMemo(() => {
+    const weekDays = getWeekDays();
+    return weekDays.map((day) => ({
+      ...day,
+      items: managerRows
+        .filter((row) => row.shift_date === day.date)
+        .sort((a, b) => getShiftSortValue(a) - getShiftSortValue(b)),
     }));
   }, [managerRows]);
 
@@ -316,6 +424,8 @@ export function useShiftsData({
     nextShift,
     upcomingRows,
     recentRows,
+    personalWeek,
+    managerWeek,
     managerSiteId,
     setEditModalVisible,
     openEditShift,

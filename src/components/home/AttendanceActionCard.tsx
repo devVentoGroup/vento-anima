@@ -1,7 +1,6 @@
 import { ActivityIndicator, Text, TouchableOpacity, View } from "react-native"
 
 import { PALETTE, RGBA } from "@/components/home/theme"
-import { COLORS } from "@/constants/colors"
 
 type AttendanceActionCardProps = {
   cardStyle: object
@@ -13,10 +12,7 @@ type AttendanceActionCardProps = {
   ctaTextColor: string
   ctaPrimaryLabel: string
   ctaSecondaryLabel: string | null
-  isCheckedIn: boolean
-  isOnBreak: boolean
   onCheck: () => void
-  onToggleBreak: () => void
 }
 
 export function AttendanceActionCard({
@@ -29,10 +25,7 @@ export function AttendanceActionCard({
   ctaTextColor,
   ctaPrimaryLabel,
   ctaSecondaryLabel,
-  isCheckedIn,
-  isOnBreak,
   onCheck,
-  onToggleBreak,
 }: AttendanceActionCardProps) {
   return (
     <View style={{ ...cardStyle, padding: 16, marginBottom: 12 }}>
@@ -104,34 +97,6 @@ export function AttendanceActionCard({
           </View>
         )}
       </TouchableOpacity>
-
-      {isCheckedIn ? (
-        <TouchableOpacity
-          onPress={onToggleBreak}
-          disabled={isLoading}
-          style={{
-            marginTop: 10,
-            borderRadius: 14,
-            paddingVertical: 12,
-            paddingHorizontal: 14,
-            borderWidth: 1,
-            borderColor: isOnBreak ? COLORS.rosegold : PALETTE.border,
-            backgroundColor: isOnBreak ? "rgba(242, 198, 192, 0.28)" : PALETTE.porcelain2,
-            opacity: isLoading ? 0.6 : 1,
-          }}
-        >
-          <Text
-            style={{
-              fontSize: 13,
-              fontWeight: "800",
-              color: isOnBreak ? COLORS.rosegold : COLORS.text,
-              textAlign: "center",
-            }}
-          >
-            {isOnBreak ? "Finalizar descanso" : "Tomar descanso"}
-          </Text>
-        </TouchableOpacity>
-      ) : null}
     </View>
   )
 }

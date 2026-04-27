@@ -1,4 +1,5 @@
 import type { Announcement } from "@/components/announcements/types";
+import { ANIMA_COPY } from "@/brand/anima/copy/app-copy";
 
 export const ANNOUNCEMENTS: Announcement[] = [
   {
@@ -18,7 +19,7 @@ export const ANNOUNCEMENTS: Announcement[] = [
   {
     id: "a-3",
     title: "Nuevo módulo de documentos",
-    body: "Pronto podrás firmar documentos desde la app sin salir de ANIMA.",
+    body: ANIMA_COPY.announcementsDocumentsTeaser,
     tag: "INFO",
     date: "15 ene 2026",
   },

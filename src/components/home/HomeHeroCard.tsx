@@ -21,10 +21,12 @@ type HomeHeroCardProps = {
     border: string;
     text: string;
   };
-  isOffline: boolean;
+  showGeofencePill: boolean;
+  showConnectivityPill: boolean;
   hasPendingAny: boolean;
   isSyncingAny: boolean;
   pendingCount: number;
+  showPendingPill: boolean;
   showHeaderOpsPill: boolean;
   headerOpsPill: {
     label: string;
@@ -46,15 +48,40 @@ export function HomeHeroCard({
   statusUI,
   geofenceUI,
   geofencePill,
-  isOffline,
+  showGeofencePill,
+  showConnectivityPill,
   hasPendingAny,
   isSyncingAny,
   pendingCount,
+  showPendingPill,
   showHeaderOpsPill,
   headerOpsPill,
   onOpenUserMenu,
   onPressOpsPill,
 }: HomeHeroCardProps) {
+  const secondaryPill = showConnectivityPill
+    ? {
+        label: "Sin conexión",
+        borderColor: RGBA.borderPink,
+        backgroundColor: "rgba(226, 0, 106, 0.08)",
+        textColor: PALETTE.accent,
+      }
+    : showPendingPill
+      ? {
+          label: hasPendingAny ? `${pendingCount} pendientes` : "Sincronizando",
+          borderColor: hasPendingAny ? RGBA.borderPink : PALETTE.border,
+          backgroundColor: hasPendingAny ? "rgba(226, 0, 106, 0.08)" : PALETTE.porcelain2,
+          textColor: hasPendingAny ? PALETTE.accent : PALETTE.neutral,
+        }
+      : showGeofencePill
+        ? {
+            label: geofenceUI.label,
+            borderColor: geofencePill.border,
+            backgroundColor: geofencePill.bg,
+            textColor: geofencePill.text,
+          }
+        : null;
+
   return (
     <View
       style={{
@@ -99,20 +126,20 @@ export function HomeHeroCard({
           <Text
             style={{
               fontSize: 12,
-              fontWeight: "600",
+              fontWeight: "500",
               color: PALETTE.neutral,
-              letterSpacing: 0.2,
+              letterSpacing: 0.1,
             }}
           >
             {todayLabel}
           </Text>
           <Text
             style={{
-              fontSize: 34,
-              fontWeight: "900",
+              fontSize: 31,
+              fontWeight: "800",
               color: PALETTE.text,
               marginTop: 4,
-              lineHeight: 38,
+              lineHeight: 34,
             }}
             numberOfLines={1}
           >
@@ -153,6 +180,39 @@ export function HomeHeroCard({
 
       <View
         style={{
+          marginTop: 16,
+          padding: 12,
+          borderRadius: 18,
+          borderWidth: 1,
+          borderColor: statusUI.tone === "active" ? RGBA.borderPink : PALETTE.border,
+          backgroundColor:
+            statusUI.tone === "active" ? "rgba(242, 198, 192, 0.18)" : PALETTE.porcelain2,
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 11,
+            fontWeight: "600",
+            color: PALETTE.neutral,
+            letterSpacing: 0.1,
+          }}
+        >
+          Estado de hoy
+        </Text>
+        <Text
+          style={{
+            fontSize: 16,
+            fontWeight: "700",
+            color: statusUI.tone === "active" ? PALETTE.accent : PALETTE.text,
+            marginTop: 3,
+          }}
+        >
+          {statusUI.label}
+        </Text>
+      </View>
+
+      <View
+        style={{
           flexDirection: "row",
           flexWrap: "wrap",
           alignItems: "center",
@@ -160,101 +220,26 @@ export function HomeHeroCard({
           marginTop: 14,
         }}
       >
-        <View
-          style={{
-            ...pillStyle,
-            borderColor: statusUI.tone === "active" ? RGBA.borderPink : PALETTE.border,
-            backgroundColor:
-              statusUI.tone === "active" ? RGBA.washRoseGlow : PALETTE.porcelain2,
-          }}
-        >
-          <Text
-            style={{
-              fontSize: 11,
-              fontWeight: "900",
-              color: statusUI.tone === "active" ? PALETTE.accent : PALETTE.neutral,
-              letterSpacing: 0.45,
-              textTransform: "uppercase",
-            }}
-          >
-            {statusUI.label}
-          </Text>
-        </View>
-
-        <View
-          style={{
-            ...pillStyle,
-            borderColor: geofencePill.border,
-            backgroundColor: geofencePill.bg,
-          }}
-        >
-          <Text
-            style={{
-              fontSize: 11,
-              fontWeight: "900",
-              color: geofencePill.text,
-              letterSpacing: 0.45,
-              textTransform: "uppercase",
-            }}
-          >
-            {geofenceUI.label}
-          </Text>
-        </View>
-
-        <View
-          style={{
-            ...pillStyle,
-            borderColor: isOffline ? RGBA.borderPink : PALETTE.border,
-            backgroundColor: isOffline ? "rgba(226, 0, 106, 0.08)" : PALETTE.porcelain2,
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
+        {secondaryPill ? (
           <View
             style={{
-              width: 7,
-              height: 7,
-              borderRadius: 999,
-              backgroundColor: isOffline ? PALETTE.accent : "#16a34a",
-            }}
-          />
-          <Text
-            style={{
-              fontSize: 11,
-              fontWeight: "900",
-              color: isOffline ? PALETTE.accent : PALETTE.neutral,
-              letterSpacing: 0.45,
-              textTransform: "uppercase",
+              ...pillStyle,
+              borderColor: secondaryPill.borderColor,
+              backgroundColor: secondaryPill.backgroundColor,
             }}
           >
-            {isOffline ? "Sin conexión" : "En línea"}
-          </Text>
-        </View>
-
-        <View
-          style={{
-            ...pillStyle,
-            borderColor: hasPendingAny ? RGBA.borderPink : PALETTE.border,
-            backgroundColor: hasPendingAny ? "rgba(226, 0, 106, 0.08)" : PALETTE.porcelain2,
-          }}
-        >
-          <Text
-            style={{
-              fontSize: 11,
-              fontWeight: "900",
-              color: hasPendingAny ? PALETTE.accent : PALETTE.neutral,
-              letterSpacing: 0.45,
-              textTransform: "uppercase",
-            }}
-          >
-            {hasPendingAny
-              ? `${pendingCount} pendientes`
-              : isSyncingAny
-                ? "Sincronizando"
-                : "Al día"}
-          </Text>
-        </View>
+            <Text
+              style={{
+                fontSize: 10.5,
+                fontWeight: "700",
+                color: secondaryPill.textColor,
+                letterSpacing: 0.1,
+              }}
+            >
+              {secondaryPill.label}
+            </Text>
+          </View>
+        ) : null}
 
         {showHeaderOpsPill ? (
           <TouchableOpacity
@@ -268,11 +253,10 @@ export function HomeHeroCard({
           >
             <Text
               style={{
-                fontSize: 11,
-                fontWeight: "900",
+                fontSize: 10.5,
+                fontWeight: "700",
                 color: headerOpsPill.text,
-                letterSpacing: 0.45,
-                textTransform: "uppercase",
+                letterSpacing: 0.1,
               }}
             >
               {headerOpsPill.label}

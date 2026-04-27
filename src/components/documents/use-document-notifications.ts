@@ -4,6 +4,7 @@ import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import * as Device from "expo-device";
 
+import { ANIMA_RUNTIME } from "@/brand/anima/config/runtime";
 import { supabase } from "@/lib/supabase";
 import type { DocumentRow } from "@/components/documents/types";
 import {
@@ -16,7 +17,7 @@ import {
 const DOCUMENT_NOTIFICATION_KEY = "document_notifications_v1";
 const DEFAULT_REMINDER_DAYS = 7;
 const DOCUMENT_NOTIFICATION_CHANNEL = "document-alerts";
-const EXPO_PROJECT_ID = "2e1ba93a-039d-49e7-962d-a33ea7eaf9b3";
+const EXPO_PROJECT_ID = ANIMA_RUNTIME.expoProjectId;
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({

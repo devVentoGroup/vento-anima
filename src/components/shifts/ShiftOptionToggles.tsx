@@ -13,6 +13,7 @@ import type { ShiftFormState } from "./shift-form";
 type Props = {
   form: ShiftFormState;
   showPublishToggle?: boolean;
+  showShiftKindToggle?: boolean;
   publishLabel: string;
   onChange: (patch: Partial<ShiftFormState>) => void;
 };
@@ -20,6 +21,7 @@ type Props = {
 export function ShiftOptionToggles({
   form,
   showPublishToggle = true,
+  showShiftKindToggle = false,
   publishLabel,
   onChange,
 }: Props) {
@@ -51,21 +53,23 @@ export function ShiftOptionToggles({
         <Text style={styles.checkLabel}>Mostrar salida como "Cierre" al empleado</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity
-        onPress={() =>
-          onChange({
-            shiftKind: form.shiftKind === "descanso" ? "laboral" : "descanso",
-          })
-        }
-        style={styles.checkRow}
-      >
-        <Ionicons
-          name={form.shiftKind === "descanso" ? "checkbox" : "square-outline"}
-          size={22}
-          color={form.shiftKind === "descanso" ? COLORS.accent : COLORS.neutral}
-        />
-        <Text style={styles.checkLabel}>Marcar como turno de descanso (no laboral)</Text>
-      </TouchableOpacity>
+      {showShiftKindToggle ? (
+        <TouchableOpacity
+          onPress={() =>
+            onChange({
+              shiftKind: form.shiftKind === "descanso" ? "laboral" : "descanso",
+            })
+          }
+          style={styles.checkRow}
+        >
+          <Ionicons
+            name={form.shiftKind === "descanso" ? "checkbox" : "square-outline"}
+            size={22}
+            color={form.shiftKind === "descanso" ? COLORS.accent : COLORS.neutral}
+          />
+          <Text style={styles.checkLabel}>Marcar como turno de descanso (no laboral)</Text>
+        </TouchableOpacity>
+      ) : null}
     </>
   );
 }

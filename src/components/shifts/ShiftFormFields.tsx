@@ -21,6 +21,7 @@ type Props = {
   employees: EmployeeOption[];
   sites: SiteOption[];
   employeeHint?: string | null;
+  showBreakMinutesField?: boolean;
   onChange: (patch: Partial<ShiftFormState>) => void;
 };
 
@@ -29,6 +30,7 @@ export function ShiftFormFields({
   employees,
   sites,
   employeeHint,
+  showBreakMinutesField = false,
   onChange,
 }: Props) {
   return (
@@ -99,15 +101,19 @@ export function ShiftFormFields({
         style={styles.input}
       />
 
-      <Text style={styles.label}>Descanso (min)</Text>
-      <TextInput
-        value={form.breakMinutes}
-        onChangeText={(breakMinutes) => onChange({ breakMinutes })}
-        placeholder="0"
-        placeholderTextColor={COLORS.neutral}
-        keyboardType="number-pad"
-        style={styles.input}
-      />
+      {showBreakMinutesField ? (
+        <>
+          <Text style={styles.label}>Descanso (min)</Text>
+          <TextInput
+            value={form.breakMinutes}
+            onChangeText={(breakMinutes) => onChange({ breakMinutes })}
+            placeholder="0"
+            placeholderTextColor={COLORS.neutral}
+            keyboardType="number-pad"
+            style={styles.input}
+          />
+        </>
+      ) : null}
 
       <Text style={styles.label}>Notas (opcional)</Text>
       <TextInput

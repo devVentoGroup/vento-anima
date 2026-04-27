@@ -6,10 +6,9 @@ type TodaySummaryCardProps = {
   cardStyle: object
   cardTintStyle: object
   surfaceStyle: object
+  showHours: boolean
   hoursLabel: string
   statusHint: string
-  breakMinutesLabel: string
-  isOnBreak: boolean
   lastCheckOutSource: string | null | undefined
   lastCheckOutRaw: string | null
   lastCheckIn: string
@@ -21,10 +20,9 @@ export function TodaySummaryCard({
   cardStyle,
   cardTintStyle,
   surfaceStyle,
+  showHours,
   hoursLabel,
   statusHint,
-  breakMinutesLabel,
-  isOnBreak,
   lastCheckOutSource,
   lastCheckOutRaw,
   lastCheckIn,
@@ -34,44 +32,46 @@ export function TodaySummaryCard({
   return (
     <View style={{ ...cardStyle, padding: 18 }}>
       <View pointerEvents="none" style={cardTintStyle} />
-      <Text style={{ fontSize: 13, color: COLORS.neutral }}>Mi jornada hoy</Text>
+      <Text style={{ fontSize: 13, color: COLORS.neutral }}>
+        {showHours ? "Mi jornada hoy" : "Registro de hoy"}
+      </Text>
 
-      <View
-        style={{
-          marginTop: 12,
-          flexDirection: "row",
-          alignItems: "flex-end",
-          flexWrap: "wrap",
-        }}
-      >
-        <Text
+      {showHours ? (
+        <View
           style={{
-            fontSize: 52,
-            lineHeight: 56,
-            fontWeight: "800",
-            color: COLORS.text,
-            fontVariant: ["tabular-nums"],
-            flexShrink: 0,
+            marginTop: 12,
+            flexDirection: "row",
+            alignItems: "flex-end",
+            flexWrap: "wrap",
           }}
         >
-          {hoursLabel}
-        </Text>
-        <Text
-          style={{
-            fontSize: 13,
-            color: COLORS.neutral,
-            marginLeft: 10,
-            marginBottom: 10,
-          }}
-        >
-          netos hoy
-        </Text>
-      </View>
+          <Text
+            style={{
+              fontSize: 52,
+              lineHeight: 56,
+              fontWeight: "800",
+              color: COLORS.text,
+              fontVariant: ["tabular-nums"],
+              flexShrink: 0,
+            }}
+          >
+            {hoursLabel}
+          </Text>
+          <Text
+            style={{
+              fontSize: 13,
+              color: COLORS.neutral,
+              marginLeft: 10,
+              marginBottom: 10,
+            }}
+          >
+            netos hoy
+          </Text>
+        </View>
+      ) : null}
 
-      <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 6 }}>{statusHint}</Text>
-      <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>
-        Descanso acumulado: {breakMinutesLabel}
-        {isOnBreak ? " (en curso)" : ""}
+      <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: showHours ? 6 : 12 }}>
+        {statusHint}
       </Text>
       {lastCheckOutSource === "system" && lastCheckOutRaw ? (
         <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 4 }}>

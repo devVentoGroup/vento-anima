@@ -25,12 +25,14 @@ import { useAuth } from "@/contexts/auth-context";
 import { useAccountDeletion } from "@/hooks/useAccountDeletion";
 import { DataCleanupFlow } from "@/components/settings/DataCleanupFlow";
 import { DeleteAccountFlow } from "@/components/settings/DeleteAccountFlow";
+import { ANIMA_COPY } from "@/brand/anima/copy/app-copy";
+import { ANIMA_RUNTIME } from "@/brand/anima/config/runtime";
 
 type SettingsSection = "permissions" | "privacy" | "account";
 type PermissionState = "granted" | "denied" | "undetermined" | "unknown";
 type PushTokenSyncResult = { ok: boolean; message: string };
 
-const EXPO_PROJECT_ID = "2e1ba93a-039d-49e7-962d-a33ea7eaf9b3";
+const EXPO_PROJECT_ID = ANIMA_RUNTIME.expoProjectId;
 const PUSH_TOKEN_MAX_ATTEMPTS = 3;
 const PUSH_TOKEN_TIMEOUT_MS = 10000;
 
@@ -273,7 +275,7 @@ export default function AccountSettingsScreen() {
       if (currentStatus === "denied" && currentCanAskAgain === false) {
         Alert.alert(
           "Notificaciones bloqueadas",
-          "ANIMA no puede enviar avisos porque el permiso está bloqueado. Actívalo desde Ajustes.",
+          ANIMA_COPY.settingsNotificationsBlockedBody,
           [
             { text: "Cancelar", style: "cancel" },
             { text: "Abrir ajustes", onPress: () => void openSystemSettings() },
@@ -290,7 +292,7 @@ export default function AccountSettingsScreen() {
       if (askedStatus === "granted") {
         const syncResult = await syncPushToken();
         if (syncResult.ok) {
-          Alert.alert("Notificaciones activadas", "Ya recibirás avisos de ANIMA.");
+          Alert.alert("Notificaciones activadas", ANIMA_COPY.settingsNotificationsEnabledBody);
         } else {
           Alert.alert(
             "Permiso activo, token pendiente",
@@ -507,7 +509,7 @@ export default function AccountSettingsScreen() {
           <View style={styles.infoCard}>
             <Text style={styles.infoTitle}>Gestion de datos personales</Text>
             <Text style={styles.infoText}>
-              Administra tu información sin salir de ANIMA. Puedes limpiar datos opcionales cuando quieras.
+              {ANIMA_COPY.settingsManageAccountBody}
             </Text>
           </View>
 

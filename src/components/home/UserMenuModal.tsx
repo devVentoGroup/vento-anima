@@ -1,5 +1,6 @@
 import { Modal, Pressable, Text, TouchableOpacity, View } from "react-native"
 
+import { ANIMA_COPY } from "@/brand/anima/copy/app-copy"
 import { COLORS } from "@/constants/colors"
 
 type UserMenuModalProps = {
@@ -51,7 +52,7 @@ export function UserMenuModal({
           <TouchableOpacity onPress={onSignOut} style={{ paddingVertical: 12, paddingHorizontal: 16 }}>
             <Text style={{ fontSize: 14, fontWeight: "700", color: COLORS.text }}>Cerrar sesión</Text>
             <Text style={{ fontSize: 12, color: COLORS.neutral, marginTop: 2 }}>
-              Salir de ANIMA
+              {ANIMA_COPY.userMenuSignOutSubtitle}
             </Text>
           </TouchableOpacity>
         </Pressable>

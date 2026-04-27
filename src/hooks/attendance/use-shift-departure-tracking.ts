@@ -169,7 +169,7 @@ export function useShiftDepartureTracking({
             );
             Alert.alert(
               "Turno cerrado automáticamente",
-              "Detectamos que te alejaste de la sede sin estar en descanso. Se registró salida automática.",
+              "Detectamos que te alejaste de la sede durante un turno activo. Se registró salida automática.",
             );
           }
           await loadTodayAttendance();

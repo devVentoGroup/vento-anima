@@ -54,15 +54,15 @@ function QuickActionItem({ icon, title, subtitle, onPress }: QuickActionItemProp
 }
 
 type QuickActionsSectionProps = {
+  onShiftsPress: () => void
   onHistoryPress: () => void
-  onAnnouncementsPress: () => void
   onSupportPress: () => void
   onDocumentsPress: () => void
 }
 
 export function QuickActionsSection({
+  onShiftsPress,
   onHistoryPress,
-  onAnnouncementsPress,
   onSupportPress,
   onDocumentsPress,
 }: QuickActionsSectionProps) {
@@ -80,8 +80,8 @@ export function QuickActionsSection({
       </Text>
 
       <View style={{ flexDirection: "row", gap: 12 }}>
+        <QuickActionItem icon="calendar-outline" title="Turnos" subtitle="Mi semana" onPress={onShiftsPress} />
         <QuickActionItem icon="time-outline" title="Historial" subtitle="Mis registros" onPress={onHistoryPress} />
-        <QuickActionItem icon="notifications-outline" title="Novedades" subtitle="Avisos del equipo" onPress={onAnnouncementsPress} />
       </View>
 
       <View style={{ flexDirection: "row", gap: 12, marginTop: 12 }}>

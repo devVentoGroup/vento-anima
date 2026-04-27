@@ -33,11 +33,18 @@ Estructura objetivo gradual:
 app/
 src/
   brand/
+    base/
+      config/
+      copy/
+      theme/
     anima/
       assets/
       config/
       copy/
       theme/
+    template/
+      config/
+      copy/
   core/
     auth/
     config/
@@ -78,6 +85,17 @@ Debe contener todo lo que cambia entre una marca y otra:
 - assets de splash/icon
 
 No debe contener logica de negocio.
+
+La estructura recomendada ahora es:
+
+- `brand/base`: defaults y contratos de marca reutilizables
+- `brand/anima`: overrides concretos de ANIMA sobre la base
+
+Regla practica:
+
+- `base` define el shape
+- cada marca concreta compone `base` y sobreescribe solo lo que cambia
+- `template` sirve como referencia neutral para futuras marcas
 
 ### `core`
 
@@ -159,6 +177,8 @@ Objetivo: dejar de aumentar la deuda mientras se reorganiza.
 
 Crear:
 
+- `src/brand/base/config/*`
+- `src/brand/base/copy/*`
 - `src/brand/anima/config/app-brand.ts`
 - `src/brand/anima/theme/*`
 - `src/brand/anima/copy/*`
@@ -173,7 +193,20 @@ Mover ahi:
 Resultado esperado:
 
 - la marca deja de estar dispersa
+- la capa base de white-label ya existe en codigo
+- ya hay una segunda marca de referencia dentro del repo
 - cambiar el branding futuro sera una operacion localizada
+
+### Patrón minimo de una nueva marca
+
+Cada marca nueva deberia nacer con estas cuatro piezas:
+
+- `brand/<marca>/config/app-brand.ts`
+- `brand/<marca>/config/runtime.ts`
+- `brand/<marca>/copy/app-copy.ts`
+- `brand/<marca>/config/expo-brand.js`
+
+La marca nueva no debe redefinir todo. Debe componer desde `brand/base/*`.
 
 ## Fase 2. Partir `auth-context`
 

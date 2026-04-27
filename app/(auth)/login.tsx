@@ -27,6 +27,7 @@ import LoginBackground from "@/components/auth/login/LoginBackground";
 import LoginHeader from "@/components/auth/login/LoginHeader";
 import LoginForm from "@/components/auth/login/LoginForm";
 import { createStarField } from "@/components/auth/login/starfield";
+import { ANIMA_RUNTIME } from "@/brand/anima/config/runtime";
 
 export default function LoginScreen() {
   const { signIn } = useAuth();
@@ -196,9 +197,7 @@ export default function LoginScreen() {
   };
 
   // Reset password debe llevar a la web de crear contraseña, no al deep link de la app
-  const authRedirectUrl =
-    process.env.EXPO_PUBLIC_ANIMA_AUTH_REDIRECT_URL ??
-    "https://anima.ventogroup.co/api/set-password";
+  const authRedirectUrl = ANIMA_RUNTIME.authRedirectUrl;
 
   const handleForgotPassword = () => {
     const trimmedEmail = email.trim();

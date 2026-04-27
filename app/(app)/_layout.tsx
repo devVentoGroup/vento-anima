@@ -93,6 +93,21 @@ export default function AppLayout() {
       />
 
       <Tabs.Screen
+        name="shifts"
+        options={{
+          title: "Turnos",
+          tabBarLabel: "Turnos",
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons
+              name={focused ? "calendar" : "calendar-outline"}
+              size={size ?? 22}
+              color={color}
+            />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
         name="history"
         options={{
           title: "Historial",
@@ -100,6 +115,36 @@ export default function AppLayout() {
           tabBarIcon: ({ color, size, focused }) => (
             <Ionicons
               name={focused ? "time" : "time-outline"}
+              size={size ?? 22}
+              color={color}
+            />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="documents"
+        options={{
+          title: "Documentos",
+          tabBarLabel: "Documentos",
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons
+              name={focused ? "document-text" : "document-text-outline"}
+              size={size ?? 22}
+              color={color}
+            />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="announcements"
+        options={{
+          title: "Novedades",
+          tabBarLabel: "Novedades",
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons
+              name={focused ? "notifications" : "notifications-outline"}
               size={size ?? 22}
               color={color}
             />
@@ -120,29 +165,6 @@ export default function AppLayout() {
             />
           ),
           ...(canSeeResumen ? {} : { href: null }),
-        }}
-      />
-
-      <Tabs.Screen
-        name="documents"
-        options={{
-          title: "Documentos",
-          tabBarLabel: "Documentos",
-          tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons
-              name={focused ? "document-text" : "document-text-outline"}
-              size={size ?? 22}
-              color={color}
-            />
-          ),
-        }}
-      />
-
-      <Tabs.Screen
-        name="shifts"
-        options={{
-          title: "Mis turnos",
-          href: null,
         }}
       />
 
@@ -175,21 +197,6 @@ export default function AppLayout() {
           tabBarIcon: ({ color, size, focused }) => (
             <Ionicons
               name={focused ? "help-circle" : "help-circle-outline"}
-              size={size ?? 22}
-              color={color}
-            />
-          ),
-        }}
-      />
-
-      <Tabs.Screen
-        name="announcements"
-        options={{
-          title: "Novedades",
-          tabBarLabel: "Novedades",
-          tabBarIcon: ({ color, size, focused }) => (
-            <Ionicons
-              name={focused ? "notifications" : "notifications-outline"}
               size={size ?? 22}
               color={color}
             />

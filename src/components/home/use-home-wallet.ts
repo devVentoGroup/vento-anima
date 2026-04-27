@@ -9,11 +9,13 @@ import { supabase } from "@/lib/supabase";
 type UseHomeWalletArgs = {
   userId: string | null | undefined;
   sessionAccessToken: string | null | undefined;
+  enabled?: boolean;
 };
 
 export function useHomeWallet({
   userId,
   sessionAccessToken,
+  enabled = true,
 }: UseHomeWalletArgs) {
   const [walletEligibility, setWalletEligibility] =
     useState<WalletEligibility | null>(null);
@@ -22,6 +24,7 @@ export function useHomeWallet({
   const [isAddingCarnetToWallet, setIsAddingCarnetToWallet] = useState(false);
 
   const loadWalletEligibility = useCallback(async () => {
+    if (!enabled) return;
     if (!userId) {
       setWalletEligibility(null);
       return;
@@ -52,12 +55,12 @@ export function useHomeWallet({
     } finally {
       setIsLoadingWalletEligibility(false);
     }
-  }, [userId]);
+  }, [enabled, userId]);
 
   useFocusEffect(
     useCallback(() => {
-      if (userId) void loadWalletEligibility();
-    }, [userId, loadWalletEligibility]),
+      if (enabled && userId) void loadWalletEligibility();
+    }, [enabled, userId, loadWalletEligibility]),
   );
 
   const walletBaseUrl =

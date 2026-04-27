@@ -372,32 +372,6 @@ export default function HistoryScreen() {
                           {formatDuration(item.durationMinutes)}
                         </Text>
                       </View>
-                      {item.breakMinutes != null ? (
-                        <View
-                          style={{
-                            flexDirection: "row",
-                            alignItems: "center",
-                            marginTop: 6,
-                          }}
-                        >
-                          <Text
-                            style={{ fontSize: 12, color: COLORS.neutral, flex: 1 }}
-                          >
-                            Descanso
-                          </Text>
-                          <Text
-                            style={{
-                              fontSize: 12,
-                              fontWeight: "700",
-                              color: COLORS.neutral,
-                              fontVariant: ["tabular-nums"],
-                              marginLeft: 8,
-                            }}
-                          >
-                            {formatDuration(item.breakMinutes)}
-                          </Text>
-                        </View>
-                      ) : null}
                     </View>
 
                     <View

@@ -4,6 +4,7 @@ import { useFocusEffect } from "@react-navigation/native"
 import * as Device from "expo-device"
 import * as Notifications from "expo-notifications"
 
+import { ANIMA_COPY } from "@/brand/anima/copy/app-copy"
 import { supabase } from "@/lib/supabase"
 
 export type NotificationPermissionStatus =
@@ -18,6 +19,7 @@ type UseHomeNotificationsArgs = {
   initialLoadDone: boolean
   dependencyKey: string
   expoProjectId: string
+  enabled?: boolean
 }
 
 function mapPermissionStatus(status: Notifications.PermissionStatus): NotificationPermissionStatus {
@@ -33,6 +35,7 @@ export function useHomeNotifications({
   initialLoadDone,
   dependencyKey,
   expoProjectId,
+  enabled = true,
 }: UseHomeNotificationsArgs) {
   const notificationsPromptAttemptedForUserRef = useRef<string | null>(null)
   const notificationsPromptInFlightRef = useRef(false)
@@ -74,8 +77,10 @@ export function useHomeNotifications({
 
   useFocusEffect(
     useCallback(() => {
-      void refreshNotificationPermission()
-    }, [refreshNotificationPermission]),
+      if (enabled) {
+        void refreshNotificationPermission()
+      }
+    }, [enabled, refreshNotificationPermission]),
   )
 
   const requestNotificationPermissionOrOpenSettings = useCallback(async () => {
@@ -93,8 +98,8 @@ export function useHomeNotifications({
 
       if (status === "denied" && canAsk === false) {
         Alert.alert(
-          "Notificaciones desactivadas",
-          "Para recibir avisos de ANIMA activa las notificaciones en Ajustes del dispositivo.",
+          ANIMA_COPY.notificationsBlockedTitle,
+          ANIMA_COPY.notificationsBlockedBody,
           [
             { text: "Cerrar", style: "cancel" },
             { text: "Abrir ajustes", onPress: () => void Linking.openSettings() },
@@ -108,7 +113,7 @@ export function useHomeNotifications({
       await refreshNotificationPermission()
       if (asked === "granted") {
         await syncPushToken()
-        Alert.alert("Listo", "Ya recibirás avisos de ANIMA.")
+        Alert.alert("Listo", ANIMA_COPY.notificationsEnabledBody)
       } else if (asked === "denied") {
         const again = await Notifications.getPermissionsAsync()
         const canAskAgain = typeof again.canAskAgain === "boolean" ? again.canAskAgain : null
@@ -137,6 +142,7 @@ export function useHomeNotifications({
       notificationsPromptInFlightRef.current = false
       return
     }
+    if (!enabled) return
     if (authIsLoading) return
     if (!initialLoadDone) return
     if (notificationsPromptAttemptedForUserRef.current === userId) return
@@ -174,7 +180,7 @@ export function useHomeNotifications({
       cancelled = true
       clearTimeout(timer)
     }
-  }, [userId, authIsLoading, initialLoadDone, dependencyKey, syncPushToken])
+  }, [userId, authIsLoading, initialLoadDone, dependencyKey, enabled, syncPushToken])
 
   return {
     notificationPermissionStatus,

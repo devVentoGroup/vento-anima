@@ -20,7 +20,10 @@ import { CONTENT_HORIZONTAL_PADDING, CONTENT_MAX_WIDTH } from "@/constants/layou
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
 import { DocumentCard } from "@/components/documents/DocumentCard";
+import { DocumentAlertsCard } from "@/components/documents/DocumentAlertsCard";
 import { DocumentsEmptyState } from "@/components/documents/DocumentsEmptyState";
+import { DocumentsEmployeeFilterCard } from "@/components/documents/DocumentsEmployeeFilterCard";
+import { DocumentsHeroCard } from "@/components/documents/DocumentsHeroCard";
 import { UploadDocumentModal } from "@/components/documents/UploadDocumentModal";
 import { DocumentPickerModal } from "@/components/documents/DocumentPickerModal";
 import { useDocumentsData } from "@/components/documents/use-documents-data";
@@ -259,139 +262,42 @@ export default function DocumentsScreen() {
           <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
         }
       >
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.title}>Documentos</Text>
-            <Text style={styles.subtitle}>
-              {canManageScopes 
-                ? "PDFs personales y de sede. Solo gerentes pueden subir."
-                : "Consulta tus documentos personales y de sede."}
-            </Text>
-          </View>
-          {canManageScopes ? (
-            <TouchableOpacity
-              onPress={openUpload}
-              style={[
-                UI.chip,
-                {
-                  borderColor: COLORS.accent,
-                  backgroundColor: "rgba(226, 0, 106, 0.12)",
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 8,
-                  paddingVertical: 10,
-                  paddingHorizontal: 14,
-                },
-              ]}
-            >
-              <Ionicons
-                name="cloud-upload-outline"
-                size={16}
-                color={COLORS.accent}
-              />
-              <Text style={{ fontWeight: "800", color: COLORS.accent }}>
-                Subir
-              </Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
+        <DocumentsHeroCard
+          canManageScopes={canManageScopes}
+          totalDocuments={documents.length}
+          alertCount={alertDocuments.length}
+          onUpload={openUpload}
+        />
 
-        {!notificationsEnabled ? (
-          <View style={{ marginTop: 14 }}>
-            <View style={[UI.card, { padding: 14 }]}>
-              <Text style={styles.alertTitle}>Notificaciones desactivadas</Text>
-              <Text style={styles.alertSubtitle}>
-                Activa permisos de notificaciones desde la pantalla Home para recibir alertas.
-              </Text>
-            </View>
-          </View>
-        ) : null}
-
-        {alertDocuments.length > 0 ? (
-          <View style={{ marginTop: 14 }}>
-            <View style={[UI.card, { padding: 14 }]}>
-              <Text style={styles.alertTitle}>Alertas de vencimiento</Text>
-              <Text style={styles.alertSubtitle}>
-                {alertDocuments.length} documentos por vencer o vencidos.
-              </Text>
-              {isScheduling ? (
-                <Text style={styles.alertSubtitle}>
-                  Configurando recordatorios...
-                </Text>
-              ) : null}
-              <View style={{ marginTop: 10, gap: 6 }}>
-                {alertDocuments.slice(0, 3).map(({ doc, daysLeft }) => {
-                  const label =
-                    daysLeft < 0
-                      ? `Vencido hace ${Math.abs(daysLeft)} días`
-                      : daysLeft === 0
-                        ? "Vence hoy"
-                        : `Vence en ${daysLeft} días`;
-                  const labelTone =
-                    daysLeft < 0 ? COLORS.neutral : COLORS.accent;
-                  return (
-                    <View key={doc.id} style={styles.alertRow}>
-                      <Text style={styles.alertRowTitle} numberOfLines={1}>
-                        {doc.document_type?.name ?? doc.title}
-                      </Text>
-                      <Text style={[styles.alertRowMeta, { color: labelTone }]}>
-                        {label}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-            </View>
-          </View>
-        ) : null}
+        <DocumentAlertsCard
+          notificationsEnabled={notificationsEnabled}
+          isScheduling={isScheduling}
+          items={alertDocuments.map(({ doc, daysLeft }) => ({
+            id: doc.id,
+            title: doc.document_type?.name ?? doc.title,
+            label:
+              daysLeft < 0
+                ? `Vencido hace ${Math.abs(daysLeft)} días`
+                : daysLeft === 0
+                  ? "Vence hoy"
+                  : `Vence en ${daysLeft} días`,
+            tone: daysLeft < 0 ? COLORS.neutral : COLORS.accent,
+          }))}
+        />
 
         {canManageScopes ? (
-          <View style={{ marginTop: 12 }}>
-            <Text style={styles.modalLabel}>Filtrar por trabajador</Text>
-            <TouchableOpacity
-              onPress={async () => {
-                console.log('[DOCUMENTS] Filter button pressed, availableEmployees:', availableEmployees.length);
-                if (availableEmployees.length === 0) {
-                  console.log('[DOCUMENTS] No employees loaded, loading...');
-                  await loadAvailableEmployees();
-                }
-                console.log('[DOCUMENTS] Setting activePicker to employee, availableEmployees:', availableEmployees.length);
-                setPickerQuery("")
-                setActivePicker("employee")
-              }}
-              style={[
-                UI.chip,
-                {
-                  borderColor: filterEmployeeId ? COLORS.accent : COLORS.border,
-                  backgroundColor: filterEmployeeId 
-                    ? "rgba(226, 0, 106, 0.10)" 
-                    : COLORS.porcelainAlt,
-                  marginTop: 6,
-                },
-              ]}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <Text style={{ fontWeight: "700", color: COLORS.text, flex: 1 }}>
-                  {filterEmployeeId 
-                    ? availableEmployees.find(e => e.id === filterEmployeeId)?.full_name ?? "Todos"
-                    : "Todos los trabajadores"}
-                </Text>
-                {filterEmployeeId ? (
-                  <TouchableOpacity
-                    onPress={(e) => {
-                      e.stopPropagation()
-                      setFilterEmployeeId(null)
-                    }}
-                    style={{ padding: 4 }}
-                  >
-                    <Ionicons name="close-circle" size={18} color={COLORS.accent} />
-                  </TouchableOpacity>
-                ) : (
-                  <Ionicons name="chevron-down" size={16} color={COLORS.neutral} />
-                )}
-              </View>
-            </TouchableOpacity>
-          </View>
+          <DocumentsEmployeeFilterCard
+            filterEmployeeId={filterEmployeeId}
+            availableEmployees={availableEmployees}
+            onOpen={async () => {
+              if (availableEmployees.length === 0) {
+                await loadAvailableEmployees()
+              }
+              setPickerQuery("")
+              setActivePicker("employee")
+            }}
+            onClear={() => setFilterEmployeeId(null)}
+          />
         ) : null}
 
         {isLoading ? (

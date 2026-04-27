@@ -1,22 +1,20 @@
-module.exports = () => {
-  const APP_VARIANT = process.env.APP_VARIANT ?? "production";
-  const IS_DEVELOPMENT = APP_VARIANT === "development";
+const {
+  APP_VARIANT,
+  EXPO_ANIMA_BRAND,
+  selectedVariant,
+} = require("./src/brand/anima/config/expo-brand.js");
 
-  const APP_NAME = IS_DEVELOPMENT ? "ANIMA Dev" : "ANIMA";
-  const APP_SCHEME = IS_DEVELOPMENT ? "anima-dev" : "anima";
-  const IOS_BUNDLE_ID = IS_DEVELOPMENT ? "com.vento.anima.dev" : "com.vento.anima";
-  const ANDROID_PACKAGE = IS_DEVELOPMENT ? "com.vento.anima.dev" : "com.vento.anima";
-  const APP_UPDATE_KEY = IS_DEVELOPMENT ? "vento_anima_dev" : "vento_anima";
+module.exports = () => {
   const SENTRY_ORG = process.env.SENTRY_ORG ?? "vento-group";
   const SENTRY_PROJECT = process.env.SENTRY_PROJECT ?? "vento-anima-mobile";
 
   return {
     expo: {
-      name: APP_NAME,
-      slug: "anima",
+      name: selectedVariant.appName,
+      slug: EXPO_ANIMA_BRAND.slug,
       platforms: ["ios", "android"],
-      scheme: APP_SCHEME,
-      version: "1.1.3",
+      scheme: selectedVariant.scheme,
+      version: "1.1.5",
       jsEngine: "hermes",
       orientation: "portrait",
       icon: "./assets/icon-padded.png",
@@ -30,16 +28,16 @@ module.exports = () => {
       ios: {
         icon: "./assets/icon-padded.png",
         supportsTablet: false,
-        bundleIdentifier: IOS_BUNDLE_ID,
-        buildNumber: "8",
+        bundleIdentifier: selectedVariant.iosBundleId,
+        buildNumber: "9",
         infoPlist: {
           NSLocationWhenInUseUsageDescription: "Necesitamos tu ubicacion para validar el check-in.",
           ITSAppUsesNonExemptEncryption: false
         }
       },
       android: {
-        package: ANDROID_PACKAGE,
-        versionCode: 12,
+        package: selectedVariant.androidPackage,
+        versionCode: 13,
         adaptiveIcon: {
           foregroundImage: "./assets/adaptive-icon-padded.png",
           backgroundColor: "#F7F5F8"
@@ -59,17 +57,17 @@ module.exports = () => {
         ]
       ],
       updates: {
-        url: "https://u.expo.dev/2e1ba93a-039d-49e7-962d-a33ea7eaf9b3"
+        url: `https://u.expo.dev/${EXPO_ANIMA_BRAND.expoProjectId}`
       },
       runtimeVersion: {
         policy: "appVersion"
       },
       extra: {
         appVariant: APP_VARIANT,
-        appUpdateKey: APP_UPDATE_KEY,
+        appUpdateKey: selectedVariant.appUpdateKey,
         router: {},
         eas: {
-          projectId: "2e1ba93a-039d-49e7-962d-a33ea7eaf9b3"
+          projectId: EXPO_ANIMA_BRAND.expoProjectId
         }
       }
     }

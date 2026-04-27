@@ -11,6 +11,7 @@ import * as Sharing from "expo-sharing";
 import * as MailComposer from "expo-mail-composer";
 import type { DateData } from "react-native-calendars";
 import { useWindowDimensions } from "react-native";
+import { ANIMA_COPY } from "@/brand/anima/copy/app-copy";
 import { useAuth } from "@/contexts/auth-context";
 import { supabase } from "@/lib/supabase";
 import { COLORS } from "@/constants/colors";
@@ -434,7 +435,7 @@ export function OperativoReportScreen() {
       }
       await MailComposer.composeAsync({
         recipients: [user.email],
-        subject: "Reporte de asistencia ANIMA",
+        subject: ANIMA_COPY.attendanceReportSubject,
         body: `Adjunto encuentras el reporte de asistencia (${reportScopeLabel}).`,
         attachments: [uri],
       });

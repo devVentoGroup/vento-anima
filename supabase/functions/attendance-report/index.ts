@@ -288,6 +288,13 @@ function minutesToLabel(value: number): string {
   return `${minutes} min`
 }
 
+function minutesToHoursLabel(value: number): string {
+  const total = safeMinutes(value)
+  const hours = total / 60
+  if (Number.isInteger(hours)) return `${hours} h`
+  return `${hours.toFixed(1).replace(".", ",")} h`
+}
+
 function formatSignedMinutes(value: number): string {
   if (!Number.isFinite(value) || value === 0) return "0 min"
   const sign = value > 0 ? "+" : "-"
@@ -1235,6 +1242,7 @@ function buildWorkbook(
     { width: 12 },
     { width: 12 },
     { width: 12 },
+    { width: 14 },
     { width: 16 },
     { width: 16 },
     { width: 14 },
@@ -1246,13 +1254,13 @@ function buildWorkbook(
     { width: 40 },
   ]
 
-  detailSheet.mergeCells("A1:V1")
+  detailSheet.mergeCells("A1:W1")
   detailSheet.getCell("A1").value = "DETALLE OPERATIVO POR TURNO"
   detailSheet.getCell("A1").font = { size: 11, bold: true }
   detailSheet.getCell("A1").alignment = { vertical: "middle", horizontal: "center" }
   detailSheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "D9E8F6" } }
 
-  detailSheet.mergeCells("A2:V2")
+  detailSheet.mergeCells("A2:W2")
   detailSheet.getCell("A2").value = `Periodo: ${formatDate(start, timeZone)} a ${formatDate(end, timeZone)} | Alcance: ${scopeLabel}`
   detailSheet.getCell("A2").font = { size: 9, italic: true }
   detailSheet.getCell("A2").alignment = { vertical: "middle", horizontal: "left" }
@@ -1271,6 +1279,7 @@ function buildWorkbook(
     "Descansos",
     "Min prog.",
     "Min netos",
+    "Horas netas",
     "Tardanza",
     "Salida anticipada",
     "Tiempo extra",
@@ -1300,6 +1309,7 @@ function buildWorkbook(
       row.breakRangesLabel,
       row.scheduledNetMinutes,
       row.actualNetMinutes,
+      minutesToHoursLabel(row.actualNetMinutes),
       row.isLate ? minutesToLabel(row.lateMinutes) : "-",
       row.leftEarlyMinutes > 0 ? minutesToLabel(row.leftEarlyMinutes) : "-",
       row.overtimeMinutes > 0 ? minutesToLabel(row.overtimeMinutes) : "-",
@@ -1316,7 +1326,7 @@ function buildWorkbook(
   }
 
   if (rows.length === 0) {
-    detailSheet.mergeCells(`A${detailRow}:V${detailRow}`)
+    detailSheet.mergeCells(`A${detailRow}:W${detailRow}`)
     detailSheet.getCell(`A${detailRow}`).value = "Sin turnos para el rango seleccionado."
     detailSheet.getCell(`A${detailRow}`).font = { size: 9, italic: true }
     detailSheet.getCell(`A${detailRow}`).alignment = { vertical: "middle", horizontal: "center" }
@@ -1401,10 +1411,11 @@ function buildWorkbook(
       { width: 14 },
       { width: 14 },
       { width: 14 },
+      { width: 14 },
       { width: 36 },
     ]
 
-    sheet.mergeCells("A1:J1")
+    sheet.mergeCells("A1:K1")
     sheet.getCell("A1").value = `DETALLE INDIVIDUAL | ${person.employeeName}`
     sheet.getCell("A1").font = { size: 11, bold: true }
     sheet.getCell("A1").alignment = { vertical: "middle", horizontal: "center" }
@@ -1420,6 +1431,7 @@ function buildWorkbook(
       "Cierre",
       "Tardanza",
       "Min netos",
+      "Horas netas",
       "Observaciones",
     ]
     applyHeaderStyle(sheet.getRow(4))
@@ -1436,6 +1448,7 @@ function buildWorkbook(
         row.closureStatus,
         row.isLate ? minutesToLabel(row.lateMinutes) : "-",
         row.actualNetMinutes,
+        minutesToHoursLabel(row.actualNetMinutes),
         row.observations.join(" | ") || "Sin novedades",
       ]
       applyDataStyle(sheet.getRow(rowNumber), index % 2 === 1)
@@ -1443,7 +1456,7 @@ function buildWorkbook(
     }
 
     if (personRows.length === 0) {
-      sheet.mergeCells("A5:J5")
+      sheet.mergeCells("A5:K5")
       sheet.getCell("A5").value = "Sin registros para este trabajador."
       sheet.getCell("A5").font = { size: 9, italic: true }
       sheet.getCell("A5").alignment = { vertical: "middle", horizontal: "center" }

@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 
 import { Alert } from "react-native";
 
+import { ANIMA_COPY } from "@/brand/anima/copy/app-copy";
 import { supabase } from "@/lib/supabase";
 import { getUserFacingAuthError } from "@/utils/error-messages";
 import type { InviteFormState, SiteRow } from "@/components/team/types";
@@ -44,6 +45,44 @@ export function useTeamInvitations({
 
   const updateInviteForm = useCallback((patch: Partial<InviteFormState>) => {
     setInviteForm((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  const getInviteErrorMessage = useCallback((error: unknown, fallback: string) => {
+    const parsed =
+      error && typeof error === "object"
+        ? (error as { message?: string; context?: unknown; details?: string })
+        : {};
+
+    const context = typeof parsed.context === "string" ? parsed.context : "";
+    const details = typeof parsed.details === "string" ? parsed.details : "";
+    const raw = [parsed.message, context, details]
+      .filter((value): value is string => Boolean(value && value.trim()))
+      .join(" ");
+
+    const normalized = raw.toLowerCase();
+    if (
+      normalized.includes("forbidden role") ||
+      normalized.includes("forbidden site") ||
+      normalized.includes("invalid role") ||
+      normalized.includes("invalid site")
+    ) {
+      return "La invitación no es válida para el rol o la sede seleccionada.";
+    }
+    if (normalized.includes("already registered")) {
+      return "Ese correo ya existe en el sistema, pero no se pudo vincular automáticamente al equipo.";
+    }
+    if (normalized.includes("no se pudo enviar el correo")) {
+      return "No se pudo enviar el correo de invitación.";
+    }
+    if (
+      normalized.includes("resend_api_key") ||
+      normalized.includes("set_password_web_url") ||
+      normalized.includes("redirect_url")
+    ) {
+      return "Falta configuración de invitaciones en el backend.";
+    }
+
+    return getUserFacingAuthError(error, raw || fallback);
   }, []);
 
   const openInvite = useCallback(() => {
@@ -126,8 +165,22 @@ export function useTeamInvitations({
       if (error) {
         Alert.alert(
           "Equipo",
-          getUserFacingAuthError(
+          getInviteErrorMessage(
             error,
+            "No se pudo procesar la invitación. Intenta nuevamente.",
+          ),
+        );
+        return;
+      }
+      if ((data as { error?: string; details?: string })?.error) {
+        const payload = data as { error?: string; details?: string };
+        Alert.alert(
+          "Equipo",
+          getInviteErrorMessage(
+            {
+              message: payload.error,
+              details: payload.details,
+            },
             "No se pudo procesar la invitación. Intenta nuevamente.",
           ),
         );
@@ -149,7 +202,7 @@ export function useTeamInvitations({
       console.error("Invite error:", err);
       Alert.alert(
         "Equipo",
-        getUserFacingAuthError(
+        getInviteErrorMessage(
           err,
           "No se pudo procesar la invitación. Intenta nuevamente.",
         ),
@@ -157,7 +210,7 @@ export function useTeamInvitations({
     } finally {
       setIsInviting(false);
     }
-  }, [canAssignRole, canManageTeam, inviteForm, isManager, loadInvitations, managerSiteId]);
+  }, [canAssignRole, canManageTeam, getInviteErrorMessage, inviteForm, isManager, loadInvitations, managerSiteId]);
 
   const getEffectiveInvitationStatus = useCallback((invitation: StaffInvitationRow) => {
     if (
@@ -195,7 +248,7 @@ export function useTeamInvitations({
       if (effectiveStatus === "linked_existing_user") {
         Alert.alert(
           "Equipo",
-          "Este usuario ya existía en el sistema. Si necesita acceso, debe usar «¿Olvidaste tu contraseña?» en ANIMA.",
+          ANIMA_COPY.teamExistingUserNeedsPasswordBody,
         );
         return;
       }

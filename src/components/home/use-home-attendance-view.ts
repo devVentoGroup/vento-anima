@@ -22,9 +22,7 @@ function formatClock(value: string | null) {
 
 type AttendanceStateLike = {
   status: string
-  isOnBreak: boolean
   todayMinutes?: number | null
-  todayBreakMinutes?: number | null
   snapshotAt?: string | null
   lastCheckIn: string | null
   lastCheckOut: string | null
@@ -45,8 +43,6 @@ type AttendanceViewArgs = {
   isCheckActionLocked: boolean
   pendingAttendanceCount: number
   pendingAttendanceSyncingCount: number
-  pendingBreakCount: number
-  pendingBreakSyncingCount: number
   attendanceUxState: string
   attendanceUxMessage: string | null
 }
@@ -58,8 +54,6 @@ export function useHomeAttendanceView({
   isCheckActionLocked,
   pendingAttendanceCount,
   pendingAttendanceSyncingCount,
-  pendingBreakCount,
-  pendingBreakSyncingCount,
   attendanceUxState,
   attendanceUxMessage,
 }: AttendanceViewArgs) {
@@ -73,9 +67,8 @@ export function useHomeAttendanceView({
     !isCheckActionLocked
   const ctaTextColor = canRegister ? PALETTE.porcelain : PALETTE.text
   const ctaSubTextOpacity = canRegister ? 0.9 : 0.7
-  const hasPendingAny = pendingAttendanceCount + pendingBreakCount > 0
-  const isSyncingAny =
-    pendingAttendanceSyncingCount > 0 || pendingBreakSyncingCount > 0
+  const hasPendingAny = pendingAttendanceCount > 0
+  const isSyncingAny = pendingAttendanceSyncingCount > 0
 
   const ctaPrimaryLabel = useMemo(() => {
     if (isLoading || isGeoChecking || isCheckActionLocked) {
@@ -120,7 +113,7 @@ export function useHomeAttendanceView({
   ])
 
   const headerOpsPill = useMemo(() => {
-    const pendingTotal = pendingAttendanceCount + pendingBreakCount
+    const pendingTotal = pendingAttendanceCount
     if (isSyncingAny) {
       return {
         label: "SYNC",
@@ -143,38 +136,31 @@ export function useHomeAttendanceView({
       border: PALETTE.border,
       text: PALETTE.neutral,
     }
-  }, [isSyncingAny, pendingAttendanceCount, pendingBreakCount])
+  }, [isSyncingAny, pendingAttendanceCount])
 
   const showHeaderOpsPill = headerOpsPill.label !== "ONLINE"
 
   const statusUI = useMemo(() => {
-    if (attendanceState.isOnBreak) {
-      return {
-        label: "EN DESCANSO",
-        hint: "Pausa activa",
-        tone: "active" as const,
-      }
-    }
     if (attendanceState.status === "checked_in") {
       return {
-        label: "EN TURNO",
+        label: "En turno",
         hint: "Registro activo",
         tone: "active" as const,
       }
     }
     if (attendanceState.status === "checked_out") {
       return {
-        label: "JORNADA CERRADA",
+        label: "Jornada cerrada",
         hint: "Listo por hoy",
         tone: "done" as const,
       }
     }
     return {
-      label: "SIN INICIAR",
+      label: "Sin iniciar",
       hint: "Registra tu entrada",
       tone: "idle" as const,
     }
-  }, [attendanceState.isOnBreak, attendanceState.status])
+  }, [attendanceState.status])
 
   const geofenceUI = useMemo(() => {
     if (geofenceState.status === "ready" && geofenceState.isLatchedReady)
@@ -244,7 +230,6 @@ export function useHomeAttendanceView({
   const totalMinutes = useMemo(() => {
     const baseMinutes = Math.max(0, Math.round(attendanceState.todayMinutes ?? 0))
     if (!isCheckedIn) return baseMinutes
-    if (attendanceState.isOnBreak) return baseMinutes
     if (!attendanceState.snapshotAt) return baseMinutes
 
     const snapshotMs = new Date(attendanceState.snapshotAt).getTime()
@@ -253,7 +238,6 @@ export function useHomeAttendanceView({
     const deltaMinutes = Math.max(0, (currentTime - snapshotMs) / 60000)
     return Math.max(0, Math.round(baseMinutes + deltaMinutes))
   }, [
-    attendanceState.isOnBreak,
     attendanceState.snapshotAt,
     attendanceState.todayMinutes,
     currentTime,
@@ -261,7 +245,6 @@ export function useHomeAttendanceView({
   ])
 
   const hoursLabel = formatMinutesLabel(totalMinutes)
-  const breakMinutesLabel = formatMinutesLabel(attendanceState.todayBreakMinutes ?? 0)
   const lastCheckIn = formatClock(attendanceState.lastCheckIn)
   const lastCheckOut = formatClock(attendanceState.lastCheckOut)
 
@@ -282,7 +265,6 @@ export function useHomeAttendanceView({
     geofencePill,
     latchedRemainingMs,
     hoursLabel,
-    breakMinutesLabel,
     lastCheckIn,
     lastCheckOut,
   }

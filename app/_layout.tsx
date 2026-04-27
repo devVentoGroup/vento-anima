@@ -14,6 +14,7 @@ import { AttendanceProvider } from "@/contexts/attendance-context"
 import { AppUpdateGate } from "@/components/AppUpdateGate"
 import { useAppUpdatePolicy } from "@/hooks/use-app-update-policy"
 import { reportError } from "@/lib/monitoring"
+import { getAnimaAppUpdateKey } from "@/brand/anima/config/runtime"
 
 type LayoutErrorBoundaryProps = {
   error: Error
@@ -44,7 +45,7 @@ export function ErrorBoundary({ error, retry }: LayoutErrorBoundaryProps) {
 
 export default function RootLayout() {
   const configuredAppUpdateKey = Constants.expoConfig?.extra?.appUpdateKey as string | undefined
-  const fallbackAppUpdateKey = __DEV__ ? "vento_anima_dev" : "vento_anima"
+  const fallbackAppUpdateKey = getAnimaAppUpdateKey(__DEV__)
   const appUpdateKey = configuredAppUpdateKey ?? fallbackAppUpdateKey
   const { updateInfo, openStore, dismissOptionalUpdate } = useAppUpdatePolicy(appUpdateKey)
 

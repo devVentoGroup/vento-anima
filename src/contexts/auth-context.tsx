@@ -19,10 +19,11 @@ import { useAuthRoutingGuard } from "@/core/auth/use-auth-routing-guard"
 import { useEmployeeSitesSubscription } from "@/core/auth/use-employee-sites-subscription"
 import { useMonitoringUserSync } from "@/core/auth/use-monitoring-user-sync"
 import { usePushTokenRegistration } from "@/core/auth/use-push-token-registration"
+import { ANIMA_RUNTIME } from "@/brand/anima/config/runtime"
 import { supabase } from "@/lib/supabase"
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
-const EXPO_PROJECT_ID = "2e1ba93a-039d-49e7-962d-a33ea7eaf9b3"
+const EXPO_PROJECT_ID = ANIMA_RUNTIME.expoProjectId
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)

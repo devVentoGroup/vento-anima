@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { useFocusEffect } from "@react-navigation/native";
 import { Alert } from "react-native";
@@ -41,6 +41,7 @@ export function useTeamData({
   isManager,
   managerSiteId,
 }: UseTeamDataArgs) {
+  const TEAM_CACHE_MS = 5000;
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [sites, setSites] = useState<SiteRow[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
@@ -48,115 +49,205 @@ export function useTeamData({
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoadingInvitations, setIsLoadingInvitations] = useState(false);
+  const loadEmployeesInFlightRef = useRef<Promise<void> | null>(null);
+  const loadSitesInFlightRef = useRef<Promise<void> | null>(null);
+  const loadRolesInFlightRef = useRef<Promise<void> | null>(null);
+  const loadInvitationsInFlightRef = useRef<Promise<void> | null>(null);
+  const loadAllInFlightRef = useRef<Promise<void> | null>(null);
+  const lastEmployeesLoadedAtRef = useRef(0);
+  const lastSitesLoadedAtRef = useRef(0);
+  const lastRolesLoadedAtRef = useRef(0);
+  const lastInvitationsLoadedAtRef = useRef(0);
+  const lastLoadAllAtRef = useRef(0);
 
-  const loadEmployees = useCallback(async () => {
+  const loadEmployees = useCallback(async (opts?: { force?: boolean }) => {
     if (!userId) return;
     if (isManager && !managerSiteId) {
       setEmployees([]);
       return;
     }
+    if (loadEmployeesInFlightRef.current) {
+      await loadEmployeesInFlightRef.current;
+      return;
+    }
+    if (!opts?.force && Date.now() - lastEmployeesLoadedAtRef.current < TEAM_CACHE_MS) return;
 
-    setIsLoading(true);
-    try {
-      let query = supabase
-        .from("employees")
-        .select(
-          `id, full_name, alias, role, site_id, is_active, sites:sites!employees_site_id_fkey (id, name)`,
-        )
-        .order("full_name", { ascending: true });
+    const task = (async () => {
+      try {
+        setIsLoading(true);
+        let query = supabase
+          .from("employees")
+          .select(
+            `id, full_name, alias, role, site_id, is_active, sites:sites!employees_site_id_fkey (id, name)`,
+          )
+          .order("full_name", { ascending: true });
 
-      if (isManager && managerSiteId) {
-        query = query.eq("site_id", managerSiteId);
+        if (isManager && managerSiteId) {
+          query = query.eq("site_id", managerSiteId);
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+
+        const normalized = ((data as EmployeeRowDb[]) ?? []).map((row) => ({
+          ...row,
+          sites: Array.isArray(row.sites) ? row.sites[0] ?? null : row.sites ?? null,
+        }));
+        setEmployees(normalized);
+      } catch (err) {
+        console.error("Employees load error:", err);
+        Alert.alert("Equipo", "No se pudieron cargar los trabajadores.");
+      } finally {
+        setIsLoading(false);
       }
+    })();
 
-      const { data, error } = await query;
-      if (error) throw error;
-
-      const normalized = ((data as EmployeeRowDb[]) ?? []).map((row) => ({
-        ...row,
-        sites: Array.isArray(row.sites) ? row.sites[0] ?? null : row.sites ?? null,
-      }));
-      setEmployees(normalized);
-    } catch (err) {
-      console.error("Employees load error:", err);
-      Alert.alert("Equipo", "No se pudieron cargar los trabajadores.");
+    loadEmployeesInFlightRef.current = task;
+    try {
+      await task;
+      lastEmployeesLoadedAtRef.current = Date.now();
     } finally {
-      setIsLoading(false);
+      loadEmployeesInFlightRef.current = null;
     }
   }, [userId, isManager, managerSiteId]);
 
-  const loadSites = useCallback(async () => {
+  const loadSites = useCallback(async (opts?: { force?: boolean }) => {
     if (!userId) return;
     if (isManager && !managerSiteId) {
       setSites([]);
       return;
     }
+    if (loadSitesInFlightRef.current) {
+      await loadSitesInFlightRef.current;
+      return;
+    }
+    if (!opts?.force && Date.now() - lastSitesLoadedAtRef.current < TEAM_CACHE_MS) return;
 
-    try {
-      let query = supabase
-        .from("sites")
-        .select("id, name, site_type, type, is_active")
-        .eq("is_active", true)
-        .order("name", { ascending: true });
+    const task = (async () => {
+      try {
+        let query = supabase
+          .from("sites")
+          .select("id, name, site_type, type, is_active")
+          .eq("is_active", true)
+          .order("name", { ascending: true });
 
-      if (isManager && managerSiteId) {
-        query = query.eq("id", managerSiteId);
+        if (isManager && managerSiteId) {
+          query = query.eq("id", managerSiteId);
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+        setSites((data as SiteRow[]) ?? []);
+      } catch (err) {
+        console.error("Sites load error:", err);
       }
+    })();
 
-      const { data, error } = await query;
-      if (error) throw error;
-      setSites((data as SiteRow[]) ?? []);
-    } catch (err) {
-      console.error("Sites load error:", err);
+    loadSitesInFlightRef.current = task;
+    try {
+      await task;
+      lastSitesLoadedAtRef.current = Date.now();
+    } finally {
+      loadSitesInFlightRef.current = null;
     }
   }, [userId, isManager, managerSiteId]);
 
-  const loadRoles = useCallback(async () => {
+  const loadRoles = useCallback(async (opts?: { force?: boolean }) => {
     if (!userId) return;
-    try {
-      const { data, error } = await supabase
-        .from("roles")
-        .select("code, name, is_active")
-        .eq("is_active", true)
-        .order("name", { ascending: true });
+    if (loadRolesInFlightRef.current) {
+      await loadRolesInFlightRef.current;
+      return;
+    }
+    if (!opts?.force && Date.now() - lastRolesLoadedAtRef.current < TEAM_CACHE_MS) return;
 
-      if (error) throw error;
-      setRoles((data as RoleRow[]) ?? []);
-    } catch (err) {
-      console.error("Roles load error:", err);
+    const task = (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("roles")
+          .select("code, name, is_active")
+          .eq("is_active", true)
+          .order("name", { ascending: true });
+
+        if (error) throw error;
+        setRoles((data as RoleRow[]) ?? []);
+      } catch (err) {
+        console.error("Roles load error:", err);
+      }
+    })();
+
+    loadRolesInFlightRef.current = task;
+    try {
+      await task;
+      lastRolesLoadedAtRef.current = Date.now();
+    } finally {
+      loadRolesInFlightRef.current = null;
     }
   }, [userId]);
 
-  const loadInvitations = useCallback(async () => {
+  const loadInvitations = useCallback(async (opts?: { force?: boolean }) => {
     if (!userId) return;
+    if (loadInvitationsInFlightRef.current) {
+      await loadInvitationsInFlightRef.current;
+      return;
+    }
+    if (!opts?.force && Date.now() - lastInvitationsLoadedAtRef.current < TEAM_CACHE_MS) return;
 
-    setIsLoadingInvitations(true);
-    try {
-      let query = supabase
-        .from("staff_invitations")
-        .select(
-          "id, email, full_name, status, resend_count, expires_at, cancelled_at, last_sent_at, updated_at, role_code, staff_role, site_id, staff_site_id",
-        )
-        .in("status", ["sent", "expired", "linked_existing_user"])
-        .order("updated_at", { ascending: false });
+    const task = (async () => {
+      try {
+        setIsLoadingInvitations(true);
+        let query = supabase
+          .from("staff_invitations")
+          .select(
+            "id, email, full_name, status, resend_count, expires_at, cancelled_at, last_sent_at, updated_at, role_code, staff_role, site_id, staff_site_id",
+          )
+          .in("status", ["sent", "expired"])
+          .order("updated_at", { ascending: false });
 
-      if (isManager && managerSiteId) {
-        query = query.or(`site_id.eq.${managerSiteId},staff_site_id.eq.${managerSiteId}`);
+        if (isManager && managerSiteId) {
+          query = query.or(`site_id.eq.${managerSiteId},staff_site_id.eq.${managerSiteId}`);
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+        setPendingInvitations((data as StaffInvitationRow[]) ?? []);
+      } catch (err) {
+        console.error("Invitations load error:", err);
+        setPendingInvitations([]);
+      } finally {
+        setIsLoadingInvitations(false);
       }
+    })();
 
-      const { data, error } = await query;
-      if (error) throw error;
-      setPendingInvitations((data as StaffInvitationRow[]) ?? []);
-    } catch (err) {
-      console.error("Invitations load error:", err);
-      setPendingInvitations([]);
+    loadInvitationsInFlightRef.current = task;
+    try {
+      await task;
+      lastInvitationsLoadedAtRef.current = Date.now();
     } finally {
-      setIsLoadingInvitations(false);
+      loadInvitationsInFlightRef.current = null;
     }
   }, [userId, isManager, managerSiteId]);
 
-  const loadAll = useCallback(async () => {
-    await Promise.all([loadEmployees(), loadSites(), loadRoles(), loadInvitations()]);
+  const loadAll = useCallback(async (opts?: { force?: boolean }) => {
+    if (loadAllInFlightRef.current) {
+      await loadAllInFlightRef.current;
+      return;
+    }
+    if (!opts?.force && Date.now() - lastLoadAllAtRef.current < TEAM_CACHE_MS) return;
+
+    const task = Promise.all([
+      loadEmployees(opts),
+      loadSites(opts),
+      loadRoles(opts),
+      loadInvitations(opts),
+    ]).then(() => undefined);
+
+    loadAllInFlightRef.current = task;
+    try {
+      await task;
+      lastLoadAllAtRef.current = Date.now();
+    } finally {
+      loadAllInFlightRef.current = null;
+    }
   }, [loadEmployees, loadSites, loadRoles, loadInvitations]);
 
   useFocusEffect(
@@ -169,7 +260,8 @@ export function useTeamData({
   const handleRefresh = useCallback(async () => {
     if (!canViewTeam) return;
     setIsRefreshing(true);
-    await loadAll();
+    lastLoadAllAtRef.current = 0;
+    await loadAll({ force: true });
     setIsRefreshing(false);
   }, [canViewTeam, loadAll]);
 

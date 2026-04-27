@@ -34,7 +34,6 @@ type UseHomeScreenLifecycleArgs = {
   refreshGeofence: (
     args: RefreshGeofenceArgs,
   ) => Promise<RefreshGeofenceResult> | RefreshGeofenceResult;
-  loadNextScheduledShift: () => Promise<unknown> | unknown;
   refreshEmployee: () => Promise<unknown> | unknown;
   consumePendingSiteChanges: () => void;
   startRealtimeGeofence: () => Promise<unknown> | unknown;
@@ -55,7 +54,6 @@ export function useHomeScreenLifecycle({
   geofenceUpdatedAt,
   loadTodayAttendance,
   refreshGeofence,
-  loadNextScheduledShift,
   refreshEmployee,
   consumePendingSiteChanges,
   startRealtimeGeofence,
@@ -211,8 +209,6 @@ export function useHomeScreenLifecycle({
 
   useFocusEffect(
     useCallback(() => {
-      void loadNextScheduledShift();
-
       if (userId && hasPendingSiteChanges && !siteRefreshInFlightRef.current) {
         siteRefreshInFlightRef.current = true;
         void (async () => {
@@ -235,7 +231,7 @@ export function useHomeScreenLifecycle({
         realtimeStartedRef.current = false;
         void stopRealtimeGeofenceRef.current();
       };
-    }, [hasPendingSiteChanges, loadNextScheduledShift, userId]),
+    }, [hasPendingSiteChanges, userId]),
   );
 
   return {

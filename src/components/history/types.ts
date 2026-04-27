@@ -10,14 +10,8 @@ export type AttendanceLog = {
   notes: string | null;
 };
 
-export type AttendanceBreak = {
-  started_at: string;
-  ended_at: string | null;
-};
-
 export type DerivedLog = AttendanceLog & {
   statusLabel: string;
   durationMinutes: number | null;
-  breakMinutes: number | null;
   dayKey: string;
 };

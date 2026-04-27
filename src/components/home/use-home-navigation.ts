@@ -32,18 +32,6 @@ export function useHomeNavigation({
     router.push("/shifts");
   }, [router]);
 
-  const goToDocuments = useCallback(() => {
-    router.push("/documents");
-  }, [router]);
-
-  const goToAnnouncements = useCallback(() => {
-    router.push("/announcements");
-  }, [router]);
-
-  const goToSupport = useCallback(() => {
-    router.push("/support");
-  }, [router]);
-
   const handleSelectSite = useCallback(
     async (siteId: string) => {
       setIsSitePickerOpen(false);
@@ -55,11 +43,7 @@ export function useHomeNavigation({
 
   return {
     handleSignOut,
-    goToHistory,
     goToShifts,
-    goToDocuments,
-    goToAnnouncements,
-    goToSupport,
     handleSelectSite,
   };
 }
