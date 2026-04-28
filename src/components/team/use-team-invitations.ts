@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { Alert } from "react-native";
 
@@ -42,6 +42,7 @@ export function useTeamInvitations({
   });
   const [resendingInvitationId, setResendingInvitationId] = useState<string | null>(null);
   const [cancellingInvitationId, setCancellingInvitationId] = useState<string | null>(null);
+  const inviteInFlightRef = useRef(false);
 
   const updateInviteForm = useCallback((patch: Partial<InviteFormState>) => {
     setInviteForm((prev) => ({ ...prev, ...patch }));
@@ -68,8 +69,12 @@ export function useTeamInvitations({
     ) {
       return "La invitación no es válida para el rol o la sede seleccionada.";
     }
-    if (normalized.includes("already registered")) {
-      return "Ese correo ya existe en el sistema, pero no se pudo vincular automáticamente al equipo.";
+    if (
+      normalized.includes("already registered") ||
+      normalized.includes("duplicate") ||
+      normalized.includes("ya est")
+    ) {
+      return "Ese correo ya tiene una cuenta o una invitacion pendiente. Revisa la lista de invitaciones: si aparece pendiente, usa Reenviar; si ya tiene cuenta, el trabajador puede recuperar contrasena desde el login.";
     }
     if (normalized.includes("no se pudo enviar el correo")) {
       return "No se pudo enviar el correo de invitación.";
@@ -112,8 +117,24 @@ export function useTeamInvitations({
     setInviteSuccessMessage(null);
   }, []);
 
+  const readFunctionError = useCallback(async (error: unknown) => {
+    const context = (error as { context?: unknown } | null)?.context;
+    if (context && typeof (context as Response).clone === "function") {
+      try {
+        const payload = await (context as Response).clone().json();
+        const message = [payload?.error, payload?.message, payload?.details]
+          .filter((value) => typeof value === "string" && value.trim())
+          .join(" ");
+        if (message) return message;
+      } catch {
+        // Some function errors do not include a JSON body.
+      }
+    }
+    return null;
+  }, []);
+
   const handleInvite = useCallback(async () => {
-    if (!canManageTeam) return;
+    if (!canManageTeam || inviteInFlightRef.current) return;
     if (!inviteForm.email.trim()) {
       Alert.alert("Equipo", "Escribe el correo del trabajador.");
       return;
@@ -135,6 +156,7 @@ export function useTeamInvitations({
       return;
     }
 
+    inviteInFlightRef.current = true;
     setIsInviting(true);
     try {
       const body: {
@@ -163,10 +185,11 @@ export function useTeamInvitations({
       );
 
       if (error) {
+        const functionMessage = await readFunctionError(error);
         Alert.alert(
           "Equipo",
           getInviteErrorMessage(
-            error,
+            functionMessage ? { message: functionMessage } : error,
             "No se pudo procesar la invitación. Intenta nuevamente.",
           ),
         );
@@ -193,9 +216,7 @@ export function useTeamInvitations({
 
       setInviteEmailSent(inviteForm.email.trim());
       setInviteSuccessMessage(
-        (data as { added_to_team?: boolean; message?: string })?.added_to_team
-          ? (data as { message?: string }).message ?? null
-          : null,
+        (data as { message?: string })?.message ?? null,
       );
       await loadInvitations();
     } catch (err) {
@@ -208,9 +229,10 @@ export function useTeamInvitations({
         ),
       );
     } finally {
+      inviteInFlightRef.current = false;
       setIsInviting(false);
     }
-  }, [canAssignRole, canManageTeam, getInviteErrorMessage, inviteForm, isManager, loadInvitations, managerSiteId]);
+  }, [canAssignRole, canManageTeam, getInviteErrorMessage, inviteForm, isManager, loadInvitations, managerSiteId, readFunctionError]);
 
   const getEffectiveInvitationStatus = useCallback((invitation: StaffInvitationRow) => {
     if (

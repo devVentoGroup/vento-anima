@@ -36,7 +36,7 @@ async function getLatestInvitation(
 ) {
   const { data } = await supabase
     .from("staff_invitations")
-    .select("id, status, resend_count")
+    .select("id, status, resend_count, auth_user_id, employee_id, last_sent_at")
     .eq("email", email)
     .or(`site_id.eq.${siteId},staff_site_id.eq.${siteId}`)
     .order("created_at", { ascending: false })
@@ -339,6 +339,18 @@ serve(async (req) => {
         console.error("[staff-invitations-create] persist failed:", persistError)
       }
       return buildJsonResponse({ error: raw }, 400)
+    }
+
+    const existingInvitation = await getLatestInvitation(supabase, email, siteId)
+    if (existingInvitation?.status === "sent") {
+      return buildJsonResponse({
+        invited: true,
+        invitation_id: existingInvitation.id,
+        status: "sent",
+        email,
+        message:
+          "Ya habia una invitacion pendiente para este correo. Puedes reenviarla desde la lista de invitaciones si el trabajador no encuentra el correo.",
+      })
     }
 
     // El correo ya está en Auth (ej. se registró en Vento Pass). Agregar a employees sin invitar.
