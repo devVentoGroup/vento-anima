@@ -19,6 +19,7 @@ import { COLORS } from "@/constants/colors";
 import { CONTENT_HORIZONTAL_PADDING, CONTENT_MAX_WIDTH } from "@/constants/layout";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/auth-context";
+import { useAppPermissions } from "@/hooks/use-app-permissions";
 import { DocumentCard } from "@/components/documents/DocumentCard";
 import { DocumentAlertsCard } from "@/components/documents/DocumentAlertsCard";
 import { DocumentsEmptyState } from "@/components/documents/DocumentsEmptyState";
@@ -44,6 +45,11 @@ import type {
 // Filtros de estado eliminados - solo gerentes suben documentos, no hay necesidad de estados
 const UI = DOCUMENTS_UI;
 const DEFAULT_REMINDER_DAYS = 7;
+const DOCUMENT_PERMISSION_CODES = [
+  "anima.documents.view_all",
+  "anima.documents.upload",
+  "anima.documents.delete",
+];
 
 // Funciones de estado eliminadas - no se usan más
 
@@ -51,15 +57,25 @@ export default function DocumentsScreen() {
   const insets = useSafeAreaInsets();
   const { user, employee, employeeSites, selectedSiteId } = useAuth();
   const [filterEmployeeId, setFilterEmployeeId] = useState<string | null>(null);
+  const { has: hasPermission, loaded: permissionsLoaded } = useAppPermissions(DOCUMENT_PERMISSION_CODES);
 
-  const canManageScopes = useMemo(() => {
+  const roleCanManageScopes = useMemo(() => {
     const role = employee?.role ?? null;
     return role === "propietario" || role === "gerente_general" || role === "gerente";
   }, [employee?.role]);
-  const canViewAllSites = useMemo(() => {
+  const roleCanViewAllSites = useMemo(() => {
     const role = employee?.role ?? null;
     return role === "propietario" || role === "gerente_general";
   }, [employee?.role]);
+  const canManageScopes = permissionsLoaded
+    ? hasPermission("anima.documents.upload") || roleCanManageScopes
+    : roleCanManageScopes;
+  const canDeleteDocuments = permissionsLoaded
+    ? hasPermission("anima.documents.delete") || roleCanManageScopes
+    : roleCanManageScopes;
+  const canViewAllSites = permissionsLoaded
+    ? hasPermission("anima.documents.view_all") || roleCanViewAllSites
+    : roleCanViewAllSites;
   const isManager = useMemo(() => employee?.role === "gerente", [employee?.role]);
 
   const managerSiteId = useMemo(() => {
@@ -345,7 +361,7 @@ export default function DocumentsScreen() {
                 expiryLabel={expiryLabel}
                 expiryTone={expiryTone}
                 onOpen={() => openDocument(doc)}
-                showDelete={canManageScopes}
+                showDelete={canDeleteDocuments}
                 onDelete={() => handleDeleteDocument(doc)}
               />
             );

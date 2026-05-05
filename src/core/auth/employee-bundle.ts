@@ -23,6 +23,7 @@ async function loadEmployee(userId: string, setters: EmployeeBundleSetters) {
         alias,
         role,
         site_id,
+        photo_url,
         is_active,
         sites:sites!employees_site_id_fkey (name)
       `,
@@ -50,7 +51,7 @@ async function loadEmployee(userId: string, setters: EmployeeBundleSetters) {
       role: data.role,
       siteId: data.site_id,
       siteName: (data.sites as any)?.name || null,
-      avatarUrl: null,
+      avatarUrl: data.photo_url ?? null,
       isActive: data.is_active,
     }
     setEmployee(nextEmployee)
