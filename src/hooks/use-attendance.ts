@@ -115,6 +115,17 @@ import { useAttendancePolicy } from "@/hooks/use-attendance-policy"
 
 export type { SiteCandidate } from "@/hooks/attendance/shared"
 
+type LastAttendanceLogSnapshot = {
+  action: "check_in" | "check_out"
+  occurred_at: string
+  site_id: string
+  site_name: string | null
+  source: string | null
+  shift_id: string | null
+  client_event_id: string | null
+  pending?: boolean
+}
+
 export function useAttendance() {
   const { user, employee, employeeSites, selectedSiteId, setSelectedSite } = useAuth()
   const { policy: attendancePolicy } = useAttendancePolicy()
@@ -206,15 +217,7 @@ export function useAttendance() {
     [employeeSites]
   )
 
-  const getLastAttendanceLog = useCallback(async (): Promise<{
-    action: "check_in" | "check_out"
-    occurred_at: string
-    site_id: string
-    site_name: string | null
-    source: string | null
-    shift_id: string | null
-    client_event_id: string | null
-  } | null> => {
+  const getLastAttendanceLog = useCallback(async (): Promise<LastAttendanceLogSnapshot | null> => {
     if (!user) return null
 
     const { data, error } = await supabase
@@ -439,6 +442,89 @@ export function useAttendance() {
     [getLastAttendanceLog]
   )
 
+  const getSiteNameFromEmployeeSites = useCallback(
+    (siteId?: string | null): string | null => {
+      if (!siteId) return null
+
+      const sites: any[] = Array.isArray(employeeSites)
+        ? (employeeSites as any[])
+        : []
+
+      const match = sites.find((item) => {
+        return (
+          item?.id === siteId ||
+          item?.site_id === siteId ||
+          item?.siteId === siteId ||
+          item?.site?.id === siteId
+        )
+      })
+
+      return (
+        match?.site?.name ??
+        match?.site_name ??
+        match?.siteName ??
+        match?.name ??
+        null
+      )
+    },
+    [employeeSites]
+  )
+
+  const getLatestPendingAttendanceLog = useCallback(async (): Promise<LastAttendanceLogSnapshot | null> => {
+    if (!user) return null
+
+    const queue =
+      pendingAttendanceQueue.length > 0 ? pendingAttendanceQueue : await loadPendingAttendanceQueue()
+
+    const orderedPendingLogs = queue
+      .filter((item) => item.status !== "conflict")
+      .filter(
+        (item) =>
+          item.payload.action === "check_in" || item.payload.action === "check_out"
+      )
+      .sort((a, b) => {
+        const aTime = new Date(a.payload.occurred_at).getTime()
+        const bTime = new Date(b.payload.occurred_at).getTime()
+        return aTime - bTime
+      })
+
+    const latest = orderedPendingLogs[orderedPendingLogs.length - 1]
+    if (!latest) return null
+
+    const deviceInfo = latest.payload.device_info as Record<string, unknown> | null | undefined
+    const clientEventId =
+      typeof deviceInfo?.clientEventId === "string" ? deviceInfo.clientEventId : latest.eventId ?? null
+
+    return {
+      action: latest.payload.action,
+      occurred_at: latest.payload.occurred_at,
+      site_id: latest.payload.site_id,
+      site_name: getSiteNameFromEmployeeSites(latest.payload.site_id),
+      source: latest.payload.source ?? null,
+      shift_id: (latest.payload as any)?.shift_id ?? null,
+      client_event_id: clientEventId,
+      pending: true,
+    }
+  }, [getSiteNameFromEmployeeSites, loadPendingAttendanceQueue, pendingAttendanceQueue, user])
+
+  const getEffectiveLastAttendanceLog = useCallback(async (): Promise<LastAttendanceLogSnapshot | null> => {
+    const [serverLastLog, pendingLastLog] = await Promise.all([
+      getLastAttendanceLog(),
+      getLatestPendingAttendanceLog(),
+    ])
+
+    if (!serverLastLog) return pendingLastLog
+    if (!pendingLastLog) return serverLastLog
+
+    const serverTime = new Date(serverLastLog.occurred_at).getTime()
+    const pendingTime = new Date(pendingLastLog.occurred_at).getTime()
+
+    if (!Number.isFinite(pendingTime)) return serverLastLog
+    if (!Number.isFinite(serverTime)) return pendingLastLog
+
+    return pendingTime > serverTime ? pendingLastLog : serverLastLog
+  }, [getLastAttendanceLog, getLatestPendingAttendanceLog])
+
   const loadTodayAttendance = useCallback(async () => {
     if (loadTodayAttendanceInFlightRef.current) {
       await loadTodayAttendanceInFlightRef.current
@@ -480,16 +566,18 @@ export function useAttendance() {
       const startIso = start.toISOString()
       const endIso = end.toISOString()
 
-      const [{ data: todayLogs, error: todayError }, lastLog] = await Promise.all([
-        supabase
-          .from("attendance_logs")
-          .select("action, occurred_at, site_id, source, notes, device_info, sites(name)")
-          .eq("employee_id", user.id)
-          .gte("occurred_at", startIso)
-          .lte("occurred_at", endIso)
-          .order("occurred_at", { ascending: true }),
-        getLastAttendanceLog(),
-      ])
+      const [{ data: todayLogs, error: todayError }, lastLog, storedPendingQueue] =
+        await Promise.all([
+          supabase
+            .from("attendance_logs")
+            .select("action, occurred_at, site_id, source, notes, device_info, sites(name)")
+            .eq("employee_id", user.id)
+            .gte("occurred_at", startIso)
+            .lte("occurred_at", endIso)
+            .order("occurred_at", { ascending: true }),
+          getEffectiveLastAttendanceLog(),
+          pendingAttendanceQueue.length > 0 ? Promise.resolve(pendingAttendanceQueue) : loadPendingAttendanceQueue(),
+        ])
 
       if (todayError) {
         console.error("Error loading attendance:", todayError)
@@ -497,7 +585,47 @@ export function useAttendance() {
         return
       }
 
-      const logs = ((todayLogs ?? []) as AttendanceLogRow[]).sort((a, b) =>
+      const serverLogs = (todayLogs ?? []) as AttendanceLogRow[]
+      const serverClientEventIds = new Set(
+        serverLogs
+          .map((log) => ((log as any).device_info as any)?.clientEventId)
+          .filter((value): value is string => typeof value === "string" && value.length > 0)
+      )
+
+      const pendingTodayLogs = storedPendingQueue
+        .filter((item) => item.status !== "conflict")
+        .filter(
+          (item) =>
+            item.payload.action === "check_in" || item.payload.action === "check_out"
+        )
+        .filter((item) => {
+          const occurredAtMs = new Date(item.payload.occurred_at).getTime()
+          return (
+            Number.isFinite(occurredAtMs) &&
+            occurredAtMs >= start.getTime() &&
+            occurredAtMs <= end.getTime()
+          )
+        })
+        .filter((item) => {
+          const clientEventId = (item.payload.device_info as any)?.clientEventId
+          return typeof clientEventId !== "string" || !serverClientEventIds.has(clientEventId)
+        })
+        .map(
+          (item): AttendanceLogRow =>
+            ({
+              action: item.payload.action,
+              occurred_at: item.payload.occurred_at,
+              site_id: item.payload.site_id,
+              source: item.payload.source ?? null,
+              notes: null,
+              device_info: item.payload.device_info ?? null,
+              sites: {
+                name: getSiteNameFromEmployeeSites(item.payload.site_id),
+              },
+            }) as AttendanceLogRow
+        )
+
+      const logs = [...serverLogs, ...pendingTodayLogs].sort((a, b) =>
         a.occurred_at < b.occurred_at ? -1 : a.occurred_at > b.occurred_at ? 1 : 0
       )
       const checkIns = logs.filter((l) => l.action === "check_in")
@@ -611,7 +739,13 @@ export function useAttendance() {
     } finally {
       loadTodayAttendanceInFlightRef.current = null
     }
-  }, [user, getLastAttendanceLog])
+  }, [
+    user,
+    pendingAttendanceQueue,
+    loadPendingAttendanceQueue,
+    getEffectiveLastAttendanceLog,
+    getSiteNameFromEmployeeSites,
+  ])
 
   const enqueuePendingAttendanceEvent = useCallback(
     async (payload: AttendanceInsertPayload, err: unknown) => {
@@ -1205,7 +1339,7 @@ export function useAttendance() {
       }
     }
 
-    const lastLog = await getLastAttendanceLog()
+    const lastLog = await getEffectiveLastAttendanceLog()
     if (lastLog?.action === "check_in") {
       return { success: false, error: "Ya tienes un check-in activo" }
     }
@@ -1232,7 +1366,7 @@ export function useAttendance() {
 
       if (!geo.canProceed) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-        const errorMsg = geo.status === "checking" 
+        const errorMsg = geo.status === "checking"
           ? "La verificación de ubicación está tardando demasiado. Intenta de nuevo."
           : (geo.message || "Ubicación no verificada")
         return { success: false, error: errorMsg }
@@ -1269,12 +1403,13 @@ export function useAttendance() {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
 
       await loadTodayAttendance()
+      applyOptimisticAttendanceUpdate(payload, geo.siteName ?? null)
       setAttendanceDiagnostics((prev) => ({
         ...prev,
         lastCheckInDurationMs: Date.now() - checkInStartedAt,
       }))
 
-      return { success: true, timestamp: new Date().toISOString() }
+      return { success: true, timestamp: payload.occurred_at }
     } catch (err) {
       const offline = isLikelyOfflineError(err)
       const friendly = !offline ? getAttendanceErrorMessage(err, "check_in") : null
@@ -1334,7 +1469,7 @@ export function useAttendance() {
     user,
     employee,
     pendingAttendanceQueue,
-    getLastAttendanceLog,
+    getEffectiveLastAttendanceLog,
     getTodayShiftIdForSite,
     refreshGeofence,
     canReuseRecentReadyGeofence,
@@ -1351,7 +1486,7 @@ export function useAttendance() {
     if (!user || !employee) return { success: false, error: "No autenticado" }
     if (!employee.isActive) return { success: false, error: "Tu cuenta está inactiva" }
 
-    const lastLog = await getLastAttendanceLog()
+    const lastLog = await getEffectiveLastAttendanceLog()
     if (!lastLog || lastLog.action !== "check_in") {
       return { success: false, error: "No hay check-in activo" }
     }
@@ -1405,12 +1540,13 @@ export function useAttendance() {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
 
       await loadTodayAttendance()
+      applyOptimisticAttendanceUpdate(payload, lastLog.site_name ?? null)
       setAttendanceDiagnostics((prev) => ({
         ...prev,
         lastCheckOutDurationMs: Date.now() - checkOutStartedAt,
       }))
 
-      return { success: true, timestamp: new Date().toISOString() }
+      return { success: true, timestamp: payload.occurred_at }
     } catch (err) {
       const offline = isLikelyOfflineError(err)
       const friendly = !offline ? getAttendanceErrorMessage(err, "check_out") : null
@@ -1467,7 +1603,7 @@ export function useAttendance() {
   }, [
     user,
     employee,
-    getLastAttendanceLog,
+    getEffectiveLastAttendanceLog,
     refreshGeofence,
     canReuseRecentReadyGeofence,
     canQueueByPolicy,
@@ -1538,9 +1674,9 @@ export function useAttendance() {
         error: offline
           ? getUserFacingAttendanceError(err).message
           : String(
-              (err as any)?.message ??
-                getUserFacingAttendanceError(err, "No se pudo iniciar el descanso").message
-            ),
+            (err as any)?.message ??
+            getUserFacingAttendanceError(err, "No se pudo iniciar el descanso").message
+          ),
       }
     } finally {
       actionInFlightRef.current = false
@@ -1624,9 +1760,9 @@ export function useAttendance() {
           : noBreak
             ? "No tienes un descanso activo"
             : String(
-                (err as any)?.message ??
-                  getUserFacingAttendanceError(err, "No se pudo finalizar el descanso").message
-              ),
+              (err as any)?.message ??
+              getUserFacingAttendanceError(err, "No se pudo finalizar el descanso").message
+            ),
       }
     } finally {
       actionInFlightRef.current = false

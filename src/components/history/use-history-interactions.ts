@@ -36,27 +36,50 @@ export function useHistoryInteractions({
     setIsIncidentOpen(false);
   }, []);
 
-  const saveIncident = useCallback(async () => {
+   const saveIncident = useCallback(async () => {
     if (!selectedLog) return;
+
+    const logId = selectedLog.id;
+    const nextNotes = incidentText.trim() || null;
+
     setIsSavingIncident(true);
+
     try {
-      const nextNotes = incidentText.trim() || null;
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("attendance_logs")
         .update({ notes: nextNotes })
-        .eq("id", selectedLog.id);
+        .eq("id", logId)
+        .select("id, notes")
+        .maybeSingle();
 
       if (error) throw error;
 
+      if (!data) {
+        throw new Error(
+          `No attendance_logs row was updated for incident log id: ${logId}`,
+        );
+      }
+
+      const confirmedNotes = data.notes ?? null;
+
       setRows((prev) =>
         prev.map((item) =>
-          item.id === selectedLog.id ? { ...item, notes: nextNotes } : item,
+          item.id === logId ? { ...item, notes: confirmedNotes } : item,
         ),
       );
+
+      setSelectedLog((prev) =>
+        prev && prev.id === logId ? { ...prev, notes: confirmedNotes } : prev,
+      );
+
+      setIncidentText(confirmedNotes ?? "");
       setIsIncidentOpen(false);
     } catch (err) {
       console.error("Incident error:", err);
-      Alert.alert("Error", "No se pudo guardar la incidencia.");
+      Alert.alert(
+        "No se pudo guardar",
+        "La incidencia no quedó confirmada en la base de datos. Intenta de nuevo con conexión estable.",
+      );
     } finally {
       setIsSavingIncident(false);
     }
