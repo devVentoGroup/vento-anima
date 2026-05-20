@@ -195,6 +195,11 @@ export function useTeamData({
     const task = (async () => {
       try {
         setIsLoadingInvitations(true);
+        const { error: reconcileError } = await supabase.rpc("reconcile_staff_invitations");
+        if (reconcileError) {
+          console.warn("Invitation reconcile warning:", reconcileError);
+        }
+
         let query = supabase
           .from("staff_invitations")
           .select(

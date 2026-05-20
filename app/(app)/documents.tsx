@@ -12,8 +12,6 @@ import {
   Linking,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import * as Sharing from "expo-sharing";
-import * as IntentLauncher from "expo-intent-launcher";
 import { Ionicons } from "@expo/vector-icons";
 import { COLORS } from "@/constants/colors";
 import { CONTENT_HORIZONTAL_PADDING, CONTENT_MAX_WIDTH } from "@/constants/layout";
@@ -171,21 +169,20 @@ export default function DocumentsScreen() {
 
   const openDocument = async (row: DocumentRow) => {
     try {
-      console.log('[DOCUMENTS] Opening document:', row.storage_path);
-      
-      // Obtener URL pública del documento
-      const { data: { publicUrl } } = supabase.storage
+      const { data, error } = await supabase.storage
         .from("documents")
-        .getPublicUrl(row.storage_path);
+        .createSignedUrl(row.storage_path, 60 * 5);
 
-      console.log('[DOCUMENTS] Opening URL:', publicUrl);
-      
-      // Abrir en navegador externo (única opción sin custom development build)
-      await Linking.openURL(publicUrl);
+      if (error) throw error;
+      if (!data?.signedUrl) {
+        throw new Error("No se pudo generar un enlace seguro para este documento.");
+      }
+
+      await Linking.openURL(data.signedUrl);
     } catch (err) {
       console.error("[DOCUMENTS] Open document error:", err);
       Alert.alert(
-        "Error", 
+        "Documento",
         `No se pudo abrir el PDF: ${err instanceof Error ? err.message : 'Error desconocido'}`
       );
     }
@@ -369,60 +366,62 @@ export default function DocumentsScreen() {
         </View>
       </ScrollView>
 
-      <UploadDocumentModal
-        visible={isUploadOpen}
-        insets={insets}
-        styles={styles}
-        onClose={closeUploadModal}
-        onSave={handleSaveDocument}
-        isSaving={isSaving}
-        scope={scope}
-        setScope={setScope}
-        canManageScopes={canManageScopes}
-        availableEmployees={availableEmployees}
-        loadAvailableEmployees={loadAvailableEmployees}
-        selectedEmployee={selectedEmployee}
-        selectedEmployeeId={selectedEmployeeId}
-        setSelectedEmployeeId={setSelectedEmployeeId}
-        documentTypes={documentTypes}
-        loadDocumentTypes={loadDocumentTypes}
-        selectedType={selectedType}
-        selectedTypeId={selectedTypeId}
-        setSelectedTypeId={setSelectedTypeId}
-        selectedFile={selectedFile}
-        pickDocument={pickDocument}
-        description={description}
-        setDescription={setDescription}
-        customTitle={customTitle}
-        setCustomTitle={setCustomTitle}
-        activeSiteId={activeSiteId}
-        sites={sites}
-        setSiteId={setSiteId}
-        issueDate={issueDate}
-        setIssueDate={setIssueDate}
-        expiryDate={expiryDate}
-        setExpiryDate={setExpiryDate}
-        showIssuePicker={showIssuePicker}
-        setShowIssuePicker={setShowIssuePicker}
-        showExpiryPicker={showExpiryPicker}
-        setShowExpiryPicker={setShowExpiryPicker}
-        tempIssueDate={tempIssueDate}
-        setTempIssueDate={setTempIssueDate}
-        tempExpiryDate={tempExpiryDate}
-        setTempExpiryDate={setTempExpiryDate}
-        isExpiryManual={isExpiryManual}
-        setIsExpiryManual={setIsExpiryManual}
-        activePicker={activePicker}
-        setActivePicker={setActivePicker}
-        pickerQuery={pickerQuery}
-        setPickerQuery={setPickerQuery}
-        filteredTypes={filteredTypes}
-        filteredEmployees={filteredEmployees}
-        filteredSites={filteredSites}
-        addMonthsSafe={addMonthsSafe}
-        formatDateOnly={formatDateOnly}
-        formatShortDate={formatShortDate}
-      />
+      {canManageScopes ? (
+        <UploadDocumentModal
+          visible={isUploadOpen}
+          insets={insets}
+          styles={styles}
+          onClose={closeUploadModal}
+          onSave={handleSaveDocument}
+          isSaving={isSaving}
+          scope={scope}
+          setScope={setScope}
+          canManageScopes={canManageScopes}
+          availableEmployees={availableEmployees}
+          loadAvailableEmployees={loadAvailableEmployees}
+          selectedEmployee={selectedEmployee}
+          selectedEmployeeId={selectedEmployeeId}
+          setSelectedEmployeeId={setSelectedEmployeeId}
+          documentTypes={documentTypes}
+          loadDocumentTypes={loadDocumentTypes}
+          selectedType={selectedType}
+          selectedTypeId={selectedTypeId}
+          setSelectedTypeId={setSelectedTypeId}
+          selectedFile={selectedFile}
+          pickDocument={pickDocument}
+          description={description}
+          setDescription={setDescription}
+          customTitle={customTitle}
+          setCustomTitle={setCustomTitle}
+          activeSiteId={activeSiteId}
+          sites={sites}
+          setSiteId={setSiteId}
+          issueDate={issueDate}
+          setIssueDate={setIssueDate}
+          expiryDate={expiryDate}
+          setExpiryDate={setExpiryDate}
+          showIssuePicker={showIssuePicker}
+          setShowIssuePicker={setShowIssuePicker}
+          showExpiryPicker={showExpiryPicker}
+          setShowExpiryPicker={setShowExpiryPicker}
+          tempIssueDate={tempIssueDate}
+          setTempIssueDate={setTempIssueDate}
+          tempExpiryDate={tempExpiryDate}
+          setTempExpiryDate={setTempExpiryDate}
+          isExpiryManual={isExpiryManual}
+          setIsExpiryManual={setIsExpiryManual}
+          activePicker={activePicker}
+          setActivePicker={setActivePicker}
+          pickerQuery={pickerQuery}
+          setPickerQuery={setPickerQuery}
+          filteredTypes={filteredTypes}
+          filteredEmployees={filteredEmployees}
+          filteredSites={filteredSites}
+          addMonthsSafe={addMonthsSafe}
+          formatDateOnly={formatDateOnly}
+          formatShortDate={formatShortDate}
+        />
+      ) : null}
 
       <DocumentPickerModal
         visible={activePicker !== null && !isUploadOpen}

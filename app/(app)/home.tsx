@@ -29,11 +29,9 @@ import { useHomeAttendanceActions } from "@/components/home/use-home-attendance-
 import { UserMenuModal } from "@/components/home/UserMenuModal";
 import { useHomeAttendanceView } from "@/components/home/use-home-attendance-view";
 import { useHomeTodayTeam } from "@/components/home/use-home-today-team";
-import { WalletCard } from "@/components/home/WalletCard";
 import { useHomeNotifications } from "@/components/home/use-home-notifications";
 import { useHomeNavigation } from "@/components/home/use-home-navigation";
 import { useHomeScreenLifecycle } from "@/components/home/use-home-screen-lifecycle";
-import { useHomeWallet } from "@/components/home/use-home-wallet";
 import { ANIMA_RUNTIME } from "@/brand/anima/config/runtime";
 import { PALETTE, RGBA } from "@/components/home/theme";
 import { CONTENT_HORIZONTAL_PADDING, CONTENT_MAX_WIDTH } from "@/constants/layout";
@@ -77,7 +75,6 @@ export default function HomeScreen() {
   const router = useRouter();
   const {
     user,
-    session,
     employee,
     signOut,
     refreshEmployee,
@@ -117,16 +114,6 @@ export default function HomeScreen() {
   const [deferredHomeReady, setDeferredHomeReady] = useState(false);
   const [opsSectionY, setOpsSectionY] = useState(0);
   const scrollRef = useRef<ScrollView | null>(null);
-  const {
-    walletEligibility,
-    isLoadingWalletEligibility,
-    isAddingCarnetToWallet,
-    handleAddCarnetToWallet,
-  } = useHomeWallet({
-    userId: user?.id,
-    sessionAccessToken: session?.access_token,
-    enabled: deferredHomeReady,
-  });
   const {
     isLoading: isLoadingTodayTeam,
     coworkerCount,
@@ -318,9 +305,6 @@ export default function HomeScreen() {
     geofenceState.status !== "ready" || canChooseSite || Boolean(geofenceState.requiresSelection);
   const shouldShowHeroConnectivityPill = isOffline;
   const shouldShowHeroPendingPill = hasPendingAny || isSyncingAny;
-  const shouldShowWalletCard =
-    Boolean(user) &&
-    (isLoadingWalletEligibility || Boolean(walletEligibility?.wallet_eligible));
   const geofenceStatusTitle = isOffline
     ? "Sin conexión"
     : geofenceState.requiresSelection
@@ -666,15 +650,6 @@ export default function HomeScreen() {
         />
 
         {canSeeHomeReports ? <OperativoReportScreen /> : null}
-
-        {shouldShowWalletCard ? (
-          <WalletCard
-            eligibility={walletEligibility}
-            isLoading={isLoadingWalletEligibility}
-            isAdding={isAddingCarnetToWallet}
-            onAdd={handleAddCarnetToWallet}
-          />
-        ) : null}
 
         <View style={{ height: 24 }} />
       </ScrollView>

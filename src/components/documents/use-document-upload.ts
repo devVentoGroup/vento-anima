@@ -201,12 +201,17 @@ export function useDocumentUpload({
   }, []);
 
   const openUpload = useCallback(() => {
+    if (!canManageScopes) return;
     resetUpload();
     setIsUploadOpen(true);
-  }, [resetUpload]);
+  }, [canManageScopes, resetUpload]);
 
   const handleSaveDocument = useCallback(async () => {
     if (!userId || !employeeId) return;
+    if (!canManageScopes) {
+      Alert.alert("Documento", "No tienes permiso para subir documentos.");
+      return;
+    }
     if (!selectedFile) {
       Alert.alert("Documento", "Selecciona un PDF.");
       return;
@@ -330,6 +335,7 @@ export function useDocumentUpload({
     }
   }, [
     activeSiteId,
+    canManageScopes,
     customTitle,
     description,
     employeeId,

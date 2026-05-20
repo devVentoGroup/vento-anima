@@ -138,6 +138,21 @@ export default function AppLayout() {
       />
 
       <Tabs.Screen
+        name="carnet"
+        options={{
+          title: "Carnet",
+          tabBarLabel: "Carnet",
+          tabBarIcon: ({ color, size, focused }) => (
+            <Ionicons
+              name={focused ? "id-card" : "id-card-outline"}
+              size={size ?? 22}
+              color={color}
+            />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
         name="announcements"
         options={{
           title: "Novedades",
