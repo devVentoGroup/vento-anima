@@ -33,6 +33,8 @@ export function NextShiftCard({
   nextShiftStatusMeta,
   onPress,
 }: NextShiftCardProps) {
+  const shiftNote = nextScheduledShift?.notes?.trim() ?? ""
+
   return (
     <View style={{ marginTop: 20 }}>
       <View
@@ -194,6 +196,39 @@ export function NextShiftCard({
                 </Text>
               </View>
             </View>
+
+            {shiftNote ? (
+              <View
+                style={{
+                  marginTop: 14,
+                  borderRadius: 14,
+                  padding: 12,
+                  backgroundColor: COLORS.porcelainAlt,
+                  borderWidth: 1,
+                  borderColor: COLORS.border,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 12,
+                    fontWeight: "800",
+                    color: COLORS.neutral,
+                    marginBottom: 5,
+                  }}
+                >
+                  Nota del turno
+                </Text>
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color: COLORS.text,
+                    lineHeight: 19,
+                  }}
+                >
+                  {shiftNote}
+                </Text>
+              </View>
+            ) : null}
 
             {nextShiftStatusMeta ? (
               <View

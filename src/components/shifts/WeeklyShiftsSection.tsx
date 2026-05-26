@@ -96,26 +96,29 @@ export function WeeklyShiftsSection({ title, subtitle, days, mode }: Props) {
               </Text>
             </View>
           ) : (
-            day.items.map((item) => (
-              <View key={item.id} style={styles.shiftRow}>
-                <View style={styles.timeRail}>
-                  <Text style={styles.timeStart}>{formatShiftTime(item.start_time)}</Text>
-                  <View style={styles.timeDot} />
-                  <Text style={styles.timeEnd}>
-                    {item.show_end_as_close ? "Cierre" : formatShiftTime(item.end_time)}
-                  </Text>
-                </View>
+            day.items.map((item) => {
+              const shiftNote = item.notes?.trim() ?? "";
 
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.shiftTitle}>
-                    {mode === "site" && "employee_id" in item
-                      ? getEmployeeName(item)
-                      : getShiftSiteName(item.sites)}
-                  </Text>
-                  <Text style={styles.shiftSubMeta}>
-                    {mode === "site"
-                      ? getShiftSiteName(item.sites)
-                      : `${formatShiftMinutes(
+              return (
+                <View key={item.id} style={styles.shiftRow}>
+                  <View style={styles.timeRail}>
+                    <Text style={styles.timeStart}>{formatShiftTime(item.start_time)}</Text>
+                    <View style={styles.timeDot} />
+                    <Text style={styles.timeEnd}>
+                      {item.show_end_as_close ? "Cierre" : formatShiftTime(item.end_time)}
+                    </Text>
+                  </View>
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.shiftTitle}>
+                      {mode === "site" && "employee_id" in item
+                        ? getEmployeeName(item)
+                        : getShiftSiteName(item.sites)}
+                    </Text>
+                    <Text style={styles.shiftSubMeta}>
+                      {mode === "site"
+                        ? getShiftSiteName(item.sites)
+                        : `${formatShiftMinutes(
                           getShiftDurationMinutes({
                             shift_date: item.shift_date,
                             start_time: item.start_time,
@@ -123,25 +126,36 @@ export function WeeklyShiftsSection({ title, subtitle, days, mode }: Props) {
                             break_minutes: item.break_minutes ?? 0,
                           }),
                         )} · ${getShiftSiteName(item.sites)}`}
-                  </Text>
+                    </Text>
+
+                    {shiftNote ? (
+                      <View style={styles.shiftNoteBox}>
+                        <Text style={styles.shiftNoteLabel}>Nota del turno</Text>
+                        <Text style={styles.shiftNoteText} numberOfLines={3}>
+                          {shiftNote}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  {(() => {
+                    const statusMeta = getShiftStatusMeta(item.status);
+                    return (
+                      <View
+                        style={[
+                          styles.statusPill,
+                          { backgroundColor: statusMeta.bg, borderColor: statusMeta.border },
+                        ]}
+                      >
+                        <Text style={[styles.statusText, { color: statusMeta.text }]}>
+                          {statusMeta.label}
+                        </Text>
+                      </View>
+                    );
+                  })()}
                 </View>
-                {(() => {
-                  const statusMeta = getShiftStatusMeta(item.status);
-                  return (
-                    <View
-                      style={[
-                        styles.statusPill,
-                        { backgroundColor: statusMeta.bg, borderColor: statusMeta.border },
-                      ]}
-                    >
-                      <Text style={[styles.statusText, { color: statusMeta.text }]}>
-                        {statusMeta.label}
-                      </Text>
-                    </View>
-                  );
-                })()}
-              </View>
-            ))
+              );
+            })
           )}
         </View>
       ))}
@@ -310,5 +324,25 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 11,
     fontWeight: "800",
+  },
+  shiftNoteBox: {
+    marginTop: 8,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: COLORS.porcelainAlt,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  shiftNoteLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: COLORS.accent,
+    marginBottom: 3,
+  },
+  shiftNoteText: {
+    fontSize: 12,
+    color: COLORS.text,
+    lineHeight: 17,
   },
 });

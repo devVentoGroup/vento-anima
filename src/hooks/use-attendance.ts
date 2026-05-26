@@ -1325,6 +1325,9 @@ export function useAttendance() {
   const checkIn = useCallback(async (): Promise<CheckInOutResult> => {
     if (!user || !employee) return { success: false, error: "No autenticado" }
     if (!employee.isActive) return { success: false, error: "Tu cuenta está inactiva" }
+
+    const checkInAttemptedAt = new Date().toISOString()
+
     const startOfDay = new Date()
     startOfDay.setHours(0, 0, 0, 0)
     const hasPendingSameDayCheckOut = pendingAttendanceQueue.some((item) => {
@@ -1393,7 +1396,12 @@ export function useAttendance() {
         accuracyMeters: location?.accuracy ?? null,
         deviceInfo,
         clientEventId,
+        occurredAt: checkInAttemptedAt,
         shiftId,
+        extraDeviceInfo: {
+          attemptedAt: checkInAttemptedAt,
+          geofenceConfirmedAt: new Date().toISOString(),
+        },
       })
 
       await insertAttendanceLogWithRetry(payload)
@@ -1432,6 +1440,8 @@ export function useAttendance() {
         const clientEventId = buildClientEventId("check_in")
         const shiftId =
           (await getTodayShiftIdForSite(user.id, lastGeo.siteId)) ?? undefined
+        const queuedAt = new Date().toISOString()
+
         const payload = buildAttendanceInsertPayload({
           employeeId: user.id,
           siteId: lastGeo.siteId,
@@ -1442,9 +1452,11 @@ export function useAttendance() {
           accuracyMeters: lastGeo.location?.accuracy ?? null,
           deviceInfo: lastGeo.deviceInfo,
           clientEventId,
+          occurredAt: checkInAttemptedAt,
           shiftId,
           extraDeviceInfo: {
-            queuedAt: new Date().toISOString(),
+            attemptedAt: checkInAttemptedAt,
+            queuedAt,
           },
         })
         await enqueuePendingAttendanceEvent(payload, err)

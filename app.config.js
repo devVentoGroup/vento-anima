@@ -14,7 +14,7 @@ module.exports = () => {
       slug: EXPO_ANIMA_BRAND.slug,
       platforms: ["ios", "android"],
       scheme: selectedVariant.scheme,
-      version: "1.1.6",
+      version: "1.1.7",
       jsEngine: "hermes",
       orientation: "portrait",
       icon: "./assets/icon-padded.png",

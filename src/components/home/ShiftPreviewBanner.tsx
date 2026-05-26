@@ -21,6 +21,7 @@ export function ShiftPreviewBanner({
   onPress,
 }: ShiftPreviewBannerProps) {
   const shift = todayShift ?? nextScheduledShift;
+  const shiftNote = shift?.notes?.trim() ?? "";
 
   if (!shift) return null;
 
@@ -62,6 +63,42 @@ export function ShiftPreviewBanner({
           <Text style={{ fontSize: 13, color: PALETTE.neutral, marginTop: 2 }}>
             {getShiftSiteName(shift.sites)}
           </Text>
+
+          {shiftNote ? (
+            <View
+              style={{
+                marginTop: 6,
+                borderRadius: 10,
+                paddingHorizontal: 10,
+                paddingVertical: 8,
+                backgroundColor: RGBA.washRoseGlow,
+                borderWidth: 1,
+                borderColor: RGBA.borderPink,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: "800",
+                  color: PALETTE.accent,
+                  marginBottom: 3,
+                }}
+              >
+                Nota del turno
+              </Text>
+              <Text
+                style={{
+                  fontSize: 12,
+                  color: PALETTE.text,
+                  lineHeight: 17,
+                }}
+                numberOfLines={2}
+              >
+                {shiftNote}
+              </Text>
+            </View>
+          ) : null}
+
           {todayShift ? (
             <Text
               style={{
