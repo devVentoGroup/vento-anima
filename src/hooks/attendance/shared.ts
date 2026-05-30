@@ -66,6 +66,17 @@ export type AttendanceStatus =
   | "checked_in"
   | "checked_out";
 
+export type TodayAttendanceSegment = {
+  id: string;
+  checkIn: string;
+  checkOut: string | null;
+  durationMinutes: number;
+  isOpen: boolean;
+  siteId: string | null;
+  siteName: string | null;
+  source: string | null;
+};
+
 export interface AttendanceState {
   status: AttendanceStatus;
   lastCheckIn: string | null;
@@ -74,6 +85,7 @@ export interface AttendanceState {
   lastCheckOutNotes: string | null;
   todayMinutes: number;
   todayBreakMinutes: number;
+  todaySegments: TodayAttendanceSegment[];
   isOnBreak: boolean;
   openBreakStartAt: string | null;
   snapshotAt: string | null;
@@ -345,8 +357,8 @@ export function normalizePendingAttendanceEvent(
 
   const eventId = String(
     raw.eventId ??
-      payload?.device_info?.["clientEventId"] ??
-      buildClientEventId(payload.action),
+    payload?.device_info?.["clientEventId"] ??
+    buildClientEventId(payload.action),
   );
   const eventType = (raw.eventType ?? payload.action) as PendingAttendanceEventType;
   const normalizedStatus: PendingAttendanceStatus =
@@ -366,15 +378,15 @@ export function normalizePendingAttendanceEvent(
   const geoSnapshot: PendingGeoSnapshot | null =
     raw.geoSnapshot && typeof raw.geoSnapshot === "object"
       ? {
-          lat: Number(raw.geoSnapshot.lat),
-          lng: Number(raw.geoSnapshot.lng),
-          accuracy: Number(raw.geoSnapshot.accuracy),
-          timestamp: Number(raw.geoSnapshot.timestamp) || Date.now(),
-          distanceMeters:
-            raw.geoSnapshot.distanceMeters != null
-              ? Number(raw.geoSnapshot.distanceMeters)
-              : undefined,
-        }
+        lat: Number(raw.geoSnapshot.lat),
+        lng: Number(raw.geoSnapshot.lng),
+        accuracy: Number(raw.geoSnapshot.accuracy),
+        timestamp: Number(raw.geoSnapshot.timestamp) || Date.now(),
+        distanceMeters:
+          raw.geoSnapshot.distanceMeters != null
+            ? Number(raw.geoSnapshot.distanceMeters)
+            : undefined,
+      }
       : buildGeoSnapshotFromPayload(payload);
 
   return {

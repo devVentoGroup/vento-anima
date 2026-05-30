@@ -110,6 +110,7 @@ import {
   SiteCandidate,
   sleep,
   SyncResultItem,
+  TodayAttendanceSegment,
 } from "@/hooks/attendance/shared"
 import { useAttendancePolicy } from "@/hooks/use-attendance-policy"
 
@@ -138,6 +139,7 @@ export function useAttendance() {
     lastCheckOutNotes: null,
     todayMinutes: 0,
     todayBreakMinutes: 0,
+    todaySegments: [],
     isOnBreak: false,
     openBreakStartAt: null,
     snapshotAt: null,
@@ -547,6 +549,7 @@ export function useAttendance() {
           lastCheckOutNotes: null,
           todayMinutes: 0,
           todayBreakMinutes: 0,
+          todaySegments: [],
           isOnBreak: false,
           openBreakStartAt: null,
           snapshotAt: null,
@@ -576,7 +579,9 @@ export function useAttendance() {
             .lte("occurred_at", endIso)
             .order("occurred_at", { ascending: true }),
           getEffectiveLastAttendanceLog(),
-          pendingAttendanceQueue.length > 0 ? Promise.resolve(pendingAttendanceQueue) : loadPendingAttendanceQueue(),
+          pendingAttendanceQueue.length > 0
+            ? Promise.resolve(pendingAttendanceQueue)
+            : loadPendingAttendanceQueue(),
         ])
 
       if (todayError) {
@@ -658,7 +663,10 @@ export function useAttendance() {
         }
       } else if (lastLog?.action === "check_out") {
         if (lastTodayCheckIn) {
-          const logWithSiteId = lastTodayCheckIn as { site_id?: string; sites?: { name: string } }
+          const logWithSiteId = lastTodayCheckIn as {
+            site_id?: string
+            sites?: { name: string }
+          }
           currentSiteId = logWithSiteId?.site_id ?? null
           if (
             !lastTodayCheckOut ||
@@ -680,39 +688,89 @@ export function useAttendance() {
       const lastCheckOutSource = (lastTodayCheckOut as any)?.source ?? null
       const lastCheckOutNotes = (lastTodayCheckOut as any)?.notes ?? null
 
-      const shiftIntervals: Array<{ startMs: number; endMs: number }> = []
-      let pendingStartMs: number | null = null
+      const todaySegments: TodayAttendanceSegment[] = []
+      let pendingCheckInLog: AttendanceLogRow | null = null
+
+      const getLogSiteName = (log: AttendanceLogRow | null): string | null => {
+        if (!log) return null
+        const sites = (log as any)?.sites
+        if (Array.isArray(sites)) return sites[0]?.name ?? null
+        return sites?.name ?? null
+      }
+
+      const pushSegment = (args: {
+        checkInLog: AttendanceLogRow
+        checkOutLog?: AttendanceLogRow | null
+        fallbackEndMs: number
+        isOpen: boolean
+      }) => {
+        const startMs = asMillis(args.checkInLog.occurred_at)
+        const endMs = args.checkOutLog
+          ? asMillis(args.checkOutLog.occurred_at)
+          : args.fallbackEndMs
+
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+          return
+        }
+
+        todaySegments.push({
+          id: `${args.checkInLog.occurred_at}_${args.checkOutLog?.occurred_at ?? "open"}`,
+          checkIn: args.checkInLog.occurred_at,
+          checkOut: args.checkOutLog?.occurred_at ?? null,
+          durationMinutes: Math.max(0, Math.round((endMs - startMs) / 60000)),
+          isOpen: args.isOpen,
+          siteId: (args.checkInLog as any)?.site_id ?? null,
+          siteName: getLogSiteName(args.checkInLog),
+          source: (args.checkOutLog as any)?.source ?? (args.checkInLog as any)?.source ?? null,
+        })
+      }
 
       for (const log of logs) {
         if (log.action === "check_in") {
-          pendingStartMs = asMillis(log.occurred_at)
+          pendingCheckInLog = log
           continue
         }
-        if (log.action === "check_out" && pendingStartMs != null) {
-          const endMs = asMillis(log.occurred_at)
-          if (endMs > pendingStartMs) {
-            shiftIntervals.push({ startMs: pendingStartMs, endMs })
-          }
-          pendingStartMs = null
+
+        if (log.action === "check_out" && pendingCheckInLog) {
+          pushSegment({
+            checkInLog: pendingCheckInLog,
+            checkOutLog: log,
+            fallbackEndMs: asMillis(log.occurred_at),
+            isOpen: false,
+          })
+          pendingCheckInLog = null
         }
       }
 
       if (status === "checked_in") {
-        if (pendingStartMs != null && nowMs > pendingStartMs) {
-          shiftIntervals.push({ startMs: pendingStartMs, endMs: nowMs })
-        } else if (pendingStartMs == null && openStartAt) {
+        if (pendingCheckInLog) {
+          pushSegment({
+            checkInLog: pendingCheckInLog,
+            fallbackEndMs: nowMs,
+            isOpen: true,
+          })
+        } else if (openStartAt) {
           const openStartMs = asMillis(openStartAt)
-          if (nowMs > openStartMs) {
-            shiftIntervals.push({ startMs: openStartMs, endMs: nowMs })
+
+          if (Number.isFinite(openStartMs) && nowMs > openStartMs) {
+            todaySegments.push({
+              id: `${openStartAt}_open`,
+              checkIn: openStartAt,
+              checkOut: null,
+              durationMinutes: Math.max(0, Math.round((nowMs - openStartMs) / 60000)),
+              isOpen: true,
+              siteId: currentSiteId,
+              siteName: currentSiteName,
+              source: lastLog?.source ?? null,
+            })
           }
         }
       }
 
-      let grossMinutesRaw = 0
-      for (const interval of shiftIntervals) {
-        grossMinutesRaw += (interval.endMs - interval.startMs) / 60000
-      }
-      const netMinutes = Math.max(0, Math.round(grossMinutesRaw))
+      const netMinutes = Math.max(
+        0,
+        todaySegments.reduce((total, segment) => total + segment.durationMinutes, 0)
+      )
 
       setAttendanceState({
         status,
@@ -722,6 +780,7 @@ export function useAttendance() {
         lastCheckOutNotes,
         todayMinutes: netMinutes,
         todayBreakMinutes: 0,
+        todaySegments,
         isOnBreak: false,
         openBreakStartAt: null,
         snapshotAt: new Date(nowMs).toISOString(),
@@ -794,21 +853,99 @@ export function useAttendance() {
     (payload: AttendanceInsertPayload, siteName: string | null) => {
       setAttendanceState((prev) => {
         const snapshotAt = new Date().toISOString()
+
         if (payload.action === "check_in") {
+          const nextSegments: TodayAttendanceSegment[] = [
+            ...prev.todaySegments.filter((segment) => !segment.isOpen),
+            {
+              id: `${payload.occurred_at}_open`,
+              checkIn: payload.occurred_at,
+              checkOut: null,
+              durationMinutes: 0,
+              isOpen: true,
+              siteId: payload.site_id ?? prev.currentSiteId,
+              siteName: siteName ?? prev.currentSiteName,
+              source: payload.source ?? null,
+            },
+          ]
+
           return {
             ...prev,
             status: "checked_in",
             lastCheckIn: payload.occurred_at,
+            todaySegments: nextSegments,
             snapshotAt,
             openStartAt: payload.occurred_at,
             currentSiteName: siteName ?? prev.currentSiteName,
             currentSiteId: payload.site_id ?? prev.currentSiteId,
           }
         }
+
+        const alreadyHasThisCheckOut = prev.todaySegments.some(
+          (segment) => segment.checkOut === payload.occurred_at
+        )
+
+        if (alreadyHasThisCheckOut) {
+          return {
+            ...prev,
+            status: "checked_out",
+            lastCheckOut: payload.occurred_at,
+            snapshotAt,
+            openStartAt: null,
+            isOnBreak: false,
+            openBreakStartAt: null,
+          }
+        }
+
+        let closedOpenSegment = false
+        const payloadMs = asMillis(payload.occurred_at)
+
+        const nextSegments = prev.todaySegments.map((segment) => {
+          if (!segment.isOpen || closedOpenSegment) return segment
+
+          closedOpenSegment = true
+          const checkInMs = asMillis(segment.checkIn)
+
+          return {
+            ...segment,
+            checkOut: payload.occurred_at,
+            durationMinutes:
+              Number.isFinite(checkInMs) && Number.isFinite(payloadMs) && payloadMs > checkInMs
+                ? Math.max(0, Math.round((payloadMs - checkInMs) / 60000))
+                : segment.durationMinutes,
+            isOpen: false,
+            source: payload.source ?? segment.source,
+          }
+        })
+
+        if (!closedOpenSegment) {
+          const checkIn = prev.openStartAt ?? prev.lastCheckIn ?? payload.occurred_at
+          const checkInMs = asMillis(checkIn)
+
+          nextSegments.push({
+            id: `${checkIn}_${payload.occurred_at}`,
+            checkIn,
+            checkOut: payload.occurred_at,
+            durationMinutes:
+              Number.isFinite(checkInMs) && Number.isFinite(payloadMs) && payloadMs > checkInMs
+                ? Math.max(0, Math.round((payloadMs - checkInMs) / 60000))
+                : 0,
+            isOpen: false,
+            siteId: payload.site_id ?? prev.currentSiteId,
+            siteName: siteName ?? prev.currentSiteName,
+            source: payload.source ?? null,
+          })
+        }
+
         return {
           ...prev,
           status: "checked_out",
           lastCheckOut: payload.occurred_at,
+          todayMinutes: Math.max(
+            0,
+            nextSegments.reduce((total, segment) => total + segment.durationMinutes, 0)
+          ),
+          todaySegments: nextSegments,
           snapshotAt,
           openStartAt: null,
           isOnBreak: false,
@@ -1203,8 +1340,8 @@ export function useAttendance() {
           if (!location) {
             const locationResult = await getValidatedLocation({
               maxAccuracyMeters: policy.maxAccuracyMeters,
-              samples: mode === "check_out" ? 3 : 4,
-              timeoutMs: 20000,
+              samples: mode === "check_out" ? 2 : 4,
+              timeoutMs: mode === "check_out" ? 10000 : 20000,
             })
             if (!locationResult.success || !locationResult.location) {
               recordDiagnosticError(
@@ -1508,7 +1645,6 @@ export function useAttendance() {
     setIsLoading(true)
     const checkOutStartedAt = Date.now()
     const geofenceStartedAt = Date.now()
-    let lastGeo: GeofenceCheckState | null = null
 
     try {
       const siteIdToClose = lastLog.site_id
@@ -1522,7 +1658,7 @@ export function useAttendance() {
         ...prev,
         lastGeofenceDurationMs: Date.now() - geofenceStartedAt,
       }))
-      lastGeo = geo
+
       if (!geo.canProceed) {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
         return { success: false, error: geo.message || "Ubicación no verificada" }
@@ -1545,69 +1681,59 @@ export function useAttendance() {
         shiftId: lastLog.shift_id,
       })
 
-      await insertAttendanceLogWithRetry(payload)
-
-      setIsOffline(false)
-
+      applyOptimisticAttendanceUpdate(payload, lastLog.site_name ?? null)
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
 
-      await loadTodayAttendance()
-      applyOptimisticAttendanceUpdate(payload, lastLog.site_name ?? null)
-      setAttendanceDiagnostics((prev) => ({
-        ...prev,
-        lastCheckOutDurationMs: Date.now() - checkOutStartedAt,
-      }))
+      void (async () => {
+        try {
+          await insertAttendanceLogWithRetry(payload)
+          setIsOffline(false)
+          setAttendanceDiagnostics((prev) => ({
+            ...prev,
+            lastCheckOutDurationMs: Date.now() - checkOutStartedAt,
+          }))
+          await loadTodayAttendance()
+        } catch (err) {
+          const offline = isLikelyOfflineError(err)
+          const friendly = !offline ? getAttendanceErrorMessage(err, "check_out") : null
+
+          if (friendly) {
+            console.warn("Check-out background blocked:", friendly, err)
+          } else {
+            console.error("Check-out background error:", err)
+          }
+
+          recordDiagnosticError(
+            offline ? "network" : classifyDiagnosticStage(err),
+            friendly ?? getErrorMessage(err)
+          )
+          setIsOffline(offline)
+
+          const latchValid =
+            !!geo.siteId && (!!geo.canProceed || isLatchValidFor(geo.siteId))
+
+          if (
+            geo.siteId &&
+            canQueueByPolicy({ networkError: offline, latchValid, eventType: "check_out" })
+          ) {
+            const queuedPayload = {
+              ...payload,
+              device_info: {
+                ...(payload.device_info ?? {}),
+                queuedAt: new Date().toISOString(),
+              },
+            }
+
+            await enqueuePendingAttendanceEvent(queuedPayload, err)
+            await loadTodayAttendance()
+            return
+          }
+
+          await loadTodayAttendance()
+        }
+      })()
 
       return { success: true, timestamp: payload.occurred_at }
-    } catch (err) {
-      const offline = isLikelyOfflineError(err)
-      const friendly = !offline ? getAttendanceErrorMessage(err, "check_out") : null
-      if (friendly) {
-        console.warn("Check-out blocked:", friendly, err)
-      } else {
-        console.error("Check-out error:", err)
-      }
-      recordDiagnosticError(
-        offline ? "network" : classifyDiagnosticStage(err),
-        friendly ?? getErrorMessage(err)
-      )
-      setIsOffline(offline)
-      const latchValid =
-        !!lastGeo?.siteId && (!!lastGeo?.canProceed || isLatchValidFor(lastGeo.siteId))
-      if (
-        lastGeo?.siteId &&
-        canQueueByPolicy({ networkError: offline, latchValid, eventType: "check_out" })
-      ) {
-        const clientEventId = buildClientEventId("check_out")
-        const payload = buildAttendanceInsertPayload({
-          employeeId: user.id,
-          siteId: lastLog.site_id,
-          action: "check_out",
-          source: getAttendanceSource(),
-          latitude: lastGeo.location?.latitude ?? null,
-          longitude: lastGeo.location?.longitude ?? null,
-          accuracyMeters: lastGeo.location?.accuracy ?? null,
-          deviceInfo: lastGeo.deviceInfo,
-          clientEventId,
-          shiftId: lastLog.shift_id,
-          extraDeviceInfo: {
-            queuedAt: new Date().toISOString(),
-          },
-        })
-        await enqueuePendingAttendanceEvent(payload, err)
-        applyOptimisticAttendanceUpdate(payload, lastLog.site_name ?? null)
-        return {
-          success: true,
-          queued: true,
-          timestamp: payload.occurred_at,
-        }
-      }
-      return {
-        success: false,
-        error: offline
-          ? getUserFacingAttendanceError(err).message
-          : friendly ?? getUserFacingAttendanceError(err, "Error al registrar salida").message,
-      }
     } finally {
       actionInFlightRef.current = false
       setIsLoading(false)

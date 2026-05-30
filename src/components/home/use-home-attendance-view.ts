@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 
 import { PALETTE, RGBA } from "@/components/home/theme"
+import type { TodayAttendanceSegment } from "@/hooks/attendance/shared"
 
 function formatMinutesLabel(totalMinutes: number) {
   const safe = Math.max(0, Math.round(totalMinutes))
@@ -20,10 +21,21 @@ function formatClock(value: string | null) {
   return `${hours}:${minutes}`
 }
 
+type TodaySegmentView = {
+  id: string
+  title: string
+  checkIn: string
+  checkOut: string
+  durationLabel: string
+  isOpen: boolean
+  siteName: string | null
+}
+
 type AttendanceStateLike = {
   status: string
   todayMinutes?: number | null
   snapshotAt?: string | null
+  todaySegments?: TodayAttendanceSegment[] | null
   lastCheckIn: string | null
   lastCheckOut: string | null
 }
@@ -244,6 +256,33 @@ export function useHomeAttendanceView({
     isCheckedIn,
   ])
 
+  const todaySegments = useMemo<TodaySegmentView[]>(() => {
+    const segments = Array.isArray(attendanceState.todaySegments)
+      ? attendanceState.todaySegments
+      : []
+
+    return segments.map((segment, index) => {
+      let durationMinutes = Math.max(0, Math.round(segment.durationMinutes ?? 0))
+
+      if (segment.isOpen) {
+        const checkInMs = new Date(segment.checkIn).getTime()
+        if (Number.isFinite(checkInMs) && currentTime > checkInMs) {
+          durationMinutes = Math.max(0, Math.round((currentTime - checkInMs) / 60000))
+        }
+      }
+
+      return {
+        id: segment.id || `${segment.checkIn}_${index}`,
+        title: `Tramo ${index + 1}`,
+        checkIn: formatClock(segment.checkIn),
+        checkOut: segment.isOpen ? "En curso" : formatClock(segment.checkOut),
+        durationLabel: formatMinutesLabel(durationMinutes),
+        isOpen: segment.isOpen,
+        siteName: segment.siteName ?? null,
+      }
+    })
+  }, [attendanceState.todaySegments, currentTime])
+
   const hoursLabel = formatMinutesLabel(totalMinutes)
   const lastCheckIn = formatClock(attendanceState.lastCheckIn)
   const lastCheckOut = formatClock(attendanceState.lastCheckOut)
@@ -265,6 +304,7 @@ export function useHomeAttendanceView({
     geofencePill,
     latchedRemainingMs,
     hoursLabel,
+    todaySegments,
     lastCheckIn,
     lastCheckOut,
   }

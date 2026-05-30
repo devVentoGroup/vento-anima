@@ -2,6 +2,16 @@ import { Text, View } from "react-native"
 
 import { COLORS } from "@/constants/colors"
 
+type TodaySegmentViewModel = {
+  id: string
+  title: string
+  checkIn: string
+  checkOut: string
+  durationLabel: string
+  isOpen: boolean
+  siteName: string | null
+}
+
 type TodaySummaryCardProps = {
   cardStyle: object
   cardTintStyle: object
@@ -9,6 +19,7 @@ type TodaySummaryCardProps = {
   showHours: boolean
   hoursLabel: string
   statusHint: string
+  todaySegments?: TodaySegmentViewModel[]
   lastCheckOutSource: string | null | undefined
   lastCheckOutRaw: string | null
   lastCheckIn: string
@@ -23,12 +34,15 @@ export function TodaySummaryCard({
   showHours,
   hoursLabel,
   statusHint,
+  todaySegments = [],
   lastCheckOutSource,
   lastCheckOutRaw,
   lastCheckIn,
   lastCheckOut,
   formatClock,
 }: TodaySummaryCardProps) {
+  const hasSegments = todaySegments.length > 0
+
   return (
     <View style={{ ...cardStyle, padding: 18 }}>
       <View pointerEvents="none" style={cardTintStyle} />
@@ -87,49 +101,128 @@ export function TodaySummaryCard({
         }}
       />
 
-      <View style={{ flexDirection: "row", gap: 12 }}>
-        <View
-          style={{
-            flex: 1,
-            ...surfaceStyle,
-            padding: 12,
-          }}
-        >
-          <Text style={{ fontSize: 12, color: COLORS.neutral }}>Entrada</Text>
-          <Text
-            style={{
-              fontSize: 18,
-              fontWeight: "800",
-              fontVariant: ["tabular-nums"],
-              color: COLORS.text,
-              marginTop: 8,
-            }}
-          >
-            {lastCheckIn}
+      {hasSegments ? (
+        <View style={{ gap: 10 }}>
+          <Text style={{ fontSize: 13, fontWeight: "800", color: COLORS.text }}>
+            Turnos registrados
           </Text>
-        </View>
 
-        <View
-          style={{
-            flex: 1,
-            ...surfaceStyle,
-            padding: 12,
-          }}
-        >
-          <Text style={{ fontSize: 12, color: COLORS.neutral }}>Salida</Text>
-          <Text
+          {todaySegments.map((segment) => (
+            <View
+              key={segment.id}
+              style={{
+                ...surfaceStyle,
+                padding: 12,
+                gap: 10,
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: "800", color: COLORS.text }}>
+                  {segment.title}
+                </Text>
+                <Text
+                  style={{
+                    fontSize: 12,
+                    color: segment.isOpen ? COLORS.text : COLORS.neutral,
+                    fontWeight: segment.isOpen ? "800" : "600",
+                  }}
+                >
+                  {segment.durationLabel}
+                </Text>
+              </View>
+
+              <View style={{ flexDirection: "row", gap: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, color: COLORS.neutral }}>Entrada</Text>
+                  <Text
+                    style={{
+                      fontSize: 17,
+                      fontWeight: "800",
+                      fontVariant: ["tabular-nums"],
+                      color: COLORS.text,
+                      marginTop: 4,
+                    }}
+                  >
+                    {segment.checkIn}
+                  </Text>
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, color: COLORS.neutral }}>Salida</Text>
+                  <Text
+                    style={{
+                      fontSize: 17,
+                      fontWeight: "800",
+                      color: COLORS.text,
+                      fontVariant: ["tabular-nums"],
+                      marginTop: 4,
+                    }}
+                  >
+                    {segment.checkOut}
+                  </Text>
+                </View>
+              </View>
+
+              {segment.siteName ? (
+                <Text style={{ fontSize: 11, color: COLORS.neutral }}>
+                  {segment.siteName}
+                </Text>
+              ) : null}
+            </View>
+          ))}
+        </View>
+      ) : (
+        <View style={{ flexDirection: "row", gap: 12 }}>
+          <View
             style={{
-              fontSize: 18,
-              fontWeight: "800",
-              color: COLORS.text,
-              fontVariant: ["tabular-nums"],
-              marginTop: 8,
+              flex: 1,
+              ...surfaceStyle,
+              padding: 12,
             }}
           >
-            {lastCheckOut}
-          </Text>
+            <Text style={{ fontSize: 12, color: COLORS.neutral }}>Entrada</Text>
+            <Text
+              style={{
+                fontSize: 18,
+                fontWeight: "800",
+                fontVariant: ["tabular-nums"],
+                color: COLORS.text,
+                marginTop: 8,
+              }}
+            >
+              {lastCheckIn}
+            </Text>
+          </View>
+
+          <View
+            style={{
+              flex: 1,
+              ...surfaceStyle,
+              padding: 12,
+            }}
+          >
+            <Text style={{ fontSize: 12, color: COLORS.neutral }}>Salida</Text>
+            <Text
+              style={{
+                fontSize: 18,
+                fontWeight: "800",
+                color: COLORS.text,
+                fontVariant: ["tabular-nums"],
+                marginTop: 8,
+              }}
+            >
+              {lastCheckOut}
+            </Text>
+          </View>
         </View>
-      </View>
+      )}
     </View>
   )
 }

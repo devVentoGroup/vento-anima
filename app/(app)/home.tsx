@@ -176,6 +176,7 @@ export default function HomeScreen() {
     geofencePill,
     latchedRemainingMs,
     hoursLabel,
+    todaySegments,
     lastCheckIn,
     lastCheckOut,
   } = useHomeAttendanceView({
@@ -285,7 +286,7 @@ export default function HomeScreen() {
     "Sin sede asignada";
   const geofenceInfoMessage = geofenceState.isLatchedReady
     ? geofenceState.message ||
-      "Validación temporal activa. Puedes registrar mientras se restablece la señal."
+    "Validación temporal activa. Puedes registrar mientras se restablece la señal."
     : isOffline
       ? "Sin conexión o red inestable: el registro puede fallar."
       : geofenceState.status === "ready"
@@ -340,13 +341,13 @@ export default function HomeScreen() {
       const distanceMeters =
         baseLocation && hasCoordinates
           ? Math.round(
-              calculateDistance(
-                baseLocation.latitude,
-                baseLocation.longitude,
-                site.latitude as number,
-                site.longitude as number
-              )
+            calculateDistance(
+              baseLocation.latitude,
+              baseLocation.longitude,
+              site.latitude as number,
+              site.longitude as number
             )
+          )
           : null;
 
       return {
@@ -461,7 +462,7 @@ export default function HomeScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: PALETTE.porcelain }}>
-      
+
       <View
         pointerEvents="none"
         style={{
@@ -591,7 +592,7 @@ export default function HomeScreen() {
           formatLatency={formatLatency}
         />
 
-        
+
         <AttendanceActionCard
           cardStyle={UI.card}
           cardTintStyle={UI.cardTint}
@@ -612,6 +613,7 @@ export default function HomeScreen() {
           showHours={canSeeAttendanceHours}
           hoursLabel={hoursLabel}
           statusHint={statusUI.hint}
+          todaySegments={todaySegments}
           lastCheckOutSource={attendanceState.lastCheckOutSource}
           lastCheckOutRaw={attendanceState.lastCheckOut}
           lastCheckIn={lastCheckIn}
