@@ -26,7 +26,6 @@ type TodaySegmentView = {
   title: string
   checkIn: string
   checkOut: string
-  durationLabel: string
   isOpen: boolean
   siteName: string | null
 }
@@ -262,26 +261,16 @@ export function useHomeAttendanceView({
       : []
 
     return segments.map((segment, index) => {
-      let durationMinutes = Math.max(0, Math.round(segment.durationMinutes ?? 0))
-
-      if (segment.isOpen) {
-        const checkInMs = new Date(segment.checkIn).getTime()
-        if (Number.isFinite(checkInMs) && currentTime > checkInMs) {
-          durationMinutes = Math.max(0, Math.round((currentTime - checkInMs) / 60000))
-        }
-      }
-
       return {
         id: segment.id || `${segment.checkIn}_${index}`,
         title: `Tramo ${index + 1}`,
         checkIn: formatClock(segment.checkIn),
         checkOut: segment.isOpen ? "En curso" : formatClock(segment.checkOut),
-        durationLabel: formatMinutesLabel(durationMinutes),
         isOpen: segment.isOpen,
         siteName: segment.siteName ?? null,
       }
     })
-  }, [attendanceState.todaySegments, currentTime])
+  }, [attendanceState.todaySegments])
 
   const hoursLabel = formatMinutesLabel(totalMinutes)
   const lastCheckIn = formatClock(attendanceState.lastCheckIn)

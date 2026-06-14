@@ -152,7 +152,7 @@ export function validateResolvedSiteGeofence({
   }
 
   const distance = distanceRaw ?? 999999;
-  if (distance + accuracy > effectiveRadius) {
+  if (distance > effectiveRadius) {
     return buildGeofenceBlockedState({
       mode,
       siteId: site.id,
@@ -160,9 +160,7 @@ export function validateResolvedSiteGeofence({
       distanceMeters: Math.round(distance),
       accuracyMeters: accuracy,
       effectiveRadiusMeters: effectiveRadius,
-      message: `Estás a ${Math.round(distance)}m y la precisión es ${Math.round(
-        accuracy,
-      )}m. Validación real: ${Math.round(distance + accuracy)}m <= ${effectiveRadius}m.`,
+      message: `Estás a ${Math.round(distance)}m de la sede. Debes estar dentro de ${effectiveRadius}m para registrar.`,
       updatedAt,
       location,
       deviceInfo: buildDeviceInfoPayload(location, {

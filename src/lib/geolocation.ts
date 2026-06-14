@@ -451,16 +451,12 @@ export async function validateCheckInLocation(
 
   const accuracy = locationResult.location.accuracy ?? 999
 
-  //  Regla estricta: solo aceptamos si estamos "confiablemente" dentro del radio
-  // (si el GPS tiene 25m de error, no aceptamos un "estoy a 20m" sin margen)
-  const isWithinStrict = distanceMeters + accuracy <= effectiveRadius
-
-  if (!isWithinStrict) {
+  if (distanceMeters > effectiveRadius) {
     const d = Math.round(distanceMeters)
     const a = Math.round(accuracy)
     return {
       canCheckIn: false,
-      error: `estás a ${d}m de ${site.name} (precisión GPS: ${a}m). Debes estar dentro de ${effectiveRadius}m con precisión suficiente.`,
+      error: `estás a ${d}m de ${site.name} (precisión GPS: ${a}m). Debes estar dentro de ${effectiveRadius}m.`,
       location: locationResult.location,
       distanceMeters: d,
     }

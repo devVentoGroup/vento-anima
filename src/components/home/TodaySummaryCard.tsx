@@ -7,7 +7,6 @@ type TodaySegmentViewModel = {
   title: string
   checkIn: string
   checkOut: string
-  durationLabel: string
   isOpen: boolean
   siteName: string | null
 }
@@ -119,22 +118,11 @@ export function TodaySummaryCard({
               <View
                 style={{
                   flexDirection: "row",
-                  justifyContent: "space-between",
                   alignItems: "center",
-                  gap: 10,
                 }}
               >
                 <Text style={{ fontSize: 12, fontWeight: "800", color: COLORS.text }}>
                   {segment.title}
-                </Text>
-                <Text
-                  style={{
-                    fontSize: 12,
-                    color: segment.isOpen ? COLORS.text : COLORS.neutral,
-                    fontWeight: segment.isOpen ? "800" : "600",
-                  }}
-                >
-                  {segment.durationLabel}
                 </Text>
               </View>
 
